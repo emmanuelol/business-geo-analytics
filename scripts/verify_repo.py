@@ -56,6 +56,8 @@ def _check_gitignore_and_no_db_leak(repo_root: Path) -> None:
         "data/raw/kiosk.db",
         "data/raw/master_sales.db",
         "data/raw/local_assumptions.json",
+        "config/local.toml",
+        "notebooks/01_sales_baseline.html",
         ".env",
     ]
     res = subprocess.run(
@@ -91,13 +93,21 @@ def _check_gitignore_and_no_db_leak(repo_root: Path) -> None:
 
 def _check_config_templates(repo_root: Path) -> None:
     if not (repo_root / ".git").exists():
+        default_toml = repo_root / "config" / "default.toml"
+        assert default_toml.is_file(), f"Missing {default_toml}"
+        load_config(config_path=default_toml, repo_root=repo_root, env={})
+        print("[OK] Container config/default.toml verified.")
         return
+    default_toml = repo_root / "config" / "default.toml"
+    local_toml_tpl = repo_root / "config" / "local.example.toml"
     env_tpl = repo_root / ".env.example"
     json_tpl = repo_root / "local_assumptions.example.json"
+    assert default_toml.is_file(), f"Missing {default_toml}"
+    assert local_toml_tpl.is_file(), f"Missing {local_toml_tpl}"
     assert env_tpl.is_file(), f"Missing {env_tpl}"
     assert json_tpl.is_file(), f"Missing {json_tpl}"
-    load_config(assumptions_path=json_tpl, env={})
-    print("[OK] Config templates (.env.example, local_assumptions.example.json) verified.")
+    load_config(config_path=local_toml_tpl, assumptions_path=json_tpl, env={})
+    print("[OK] Config templates (config/default.toml, config/local.example.toml, .env.example, local_assumptions.example.json) verified.")
 
 
 def _check_notebooks_contract(repo_root: Path) -> None:

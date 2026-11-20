@@ -51,7 +51,7 @@ Run notebooks in sample mode (default `BGA_DATA_MODE=sample`; execute `02` first
 
 ## Docker Quickstart
 
-`.dockerignore` blocks `data/raw/`, `data/processed/`, `*.db`, `*.sqlite*`, `.env`, and `.git/` so private databases and credentials never enter an image layer. The container runs as non-root `appuser` and defaults to `BGA_DATA_MODE=sample`.
+`.dockerignore` blocks `config/local.toml`, `data/raw/`, `data/processed/`, `*.db`, `*.sqlite*`, `.env`, `notebooks/*.html`, and `.git/` so private databases, credentials, and local overrides never enter an image layer. The container runs as non-root `appuser`, reads `config/default.toml` (`data_mode = "sample"`), and mounts `./config:/app/config:ro` so your gitignored `config/local.toml` applies seamlessly without rebuilding.
 
 **Open-source sample mode (out of the box):**
 
@@ -59,7 +59,7 @@ Run notebooks in sample mode (default `BGA_DATA_MODE=sample`; execute `02` first
 docker compose up
 ```
 
-**Local private-data mode (mounts `./data/raw` strictly read-only as `:ro`):**
+**Local private-data mode (via `config/local.toml` or one-off `BGA_DATA_MODE=raw`; mounts `./config` and `./data/raw` strictly `:ro`):**
 
 ```bash
 BGA_DATA_MODE=raw docker compose up
@@ -80,12 +80,13 @@ BGA_DATA_MODE=raw docker compose --profile tools run --rm report
 To analyze a private local store (benchmark: **The Coffee – Paseo MS**, `TC-001`, Silao, Guanajuato):
 
 1. Place `master_sales.db` and `kiosk.db` inside `data/raw/` (strictly gitignored).
-2. Copy [`local_assumptions.example.json`](local_assumptions.example.json) to `data/raw/local_assumptions.json` (gitignored) and/or [`.env.example`](.env.example) to `.env` (gitignored) to override approximate coordinates (`20.95, -101.42`, `coords_verified=False`) and ROI placeholders via `BGA_*` environment variables.
-   - Override precedence: `defaults < data/raw/local_assumptions.json < env BGA_*`
-3. Set `BGA_DATA_MODE=raw` when running notebooks (`02_silao_osint_pipeline.ipynb` exports `data/processed/incidents_raw.csv` consumed by `03`–`05`) or generating a local executive report into `data/processed/` (gitignored):
+2. Copy [`config/local.example.toml`](config/local.example.toml) to `config/local.toml` (gitignored) to set `data_mode = "raw"`, `fetch_live`, `osint_start`/`osint_end`, verified storefront coordinates (`coords_verified = true`), and real ROI unit economics.
+   - Override precedence: `config/default.toml < data/raw/local_assumptions.json (deprecated) < config/local.toml < non-empty env BGA_*`
+   - Set `BGA_CONFIG_PATH=/path/to/custom.toml` to point to an alternate TOML config file.
+3. With `data_mode = "raw"` in `config/local.toml` (or one-off `BGA_DATA_MODE=raw`), run notebooks (`02_silao_osint_pipeline.ipynb` exports `data/processed/incidents_raw.csv` consumed by `03`–`05`) or generate a local executive report into `data/processed/` (gitignored):
 
 ```bash
-BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise_report; generate_franchise_report(mode='raw')"
+.venv/bin/python -c "from src.config import load_config; from src.report import generate_franchise_report; cfg = load_config(); generate_franchise_report(mode=cfg.data_mode, config=cfg)"
 ```
 
 ---
@@ -100,7 +101,7 @@ BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise
 
 ## Privacy & Security Design
 
-- **Git Isolation:** [`.gitignore`](.gitignore) excludes `data/raw/*`, `data/processed/*`, `*.db`, `*.sqlite*`, `.env`, and `data/raw/local_assumptions.json`.
+- **Git Isolation:** [`.gitignore`](.gitignore) excludes `config/local.toml`, `data/raw/*`, `data/processed/*`, `*.db`, `*.sqlite*`, `.env`, `notebooks/*.html`, and `data/raw/local_assumptions.json`.
 - **Read-Only + Allowlist Enforcement:** [`src/db_loader.py`](src/db_loader.py) opens SQLite via `?mode=ro` URI connections, exposes only explicit allowlisted tables and safe columns, and raises `RestrictedTableError` on `client_vault` or any PII/financial denylist table.
 - **Zero Raw Leakage in Samples & Templates:** [`src/generate_sample.py`](src/generate_sample.py) builds `data/sample/*.csv` purely from hard-coded generic priors (never reads `data/raw/`). [`docs/master_franchise_report.md`](docs/master_franchise_report.md) stores only `{{placeholder}}` tokens, and `src/report.py` blocks writing `"raw"` reports outside `data/processed/`.
 
@@ -119,4 +120,5 @@ BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise
 - [`docs/methodology.md`](docs/methodology.md): Statistical, spatial, and causal methodology
 - [`notebooks/`](notebooks/): 5 interactive analysis notebooks (`01` through `05`)
 - [`scripts/verify_repo.py`](scripts/verify_repo.py): Git-ignore, read-only schema, sample parity, and end-to-end smoke checks
-- [`.env.example`](.env.example) & [`local_assumptions.example.json`](local_assumptions.example.json): Templates for `BGA_*` environment overrides and `data/raw/local_assumptions.json`
+- [`config/default.toml`](config/default.toml) & [`config/local.example.toml`](config/local.example.toml): Layered TOML defaults and local branch/ROI override template (`config/local.toml` is gitignored)
+- [`.env.example`](.env.example) & [`local_assumptions.example.json`](local_assumptions.example.json): Optional `BGA_*` environment overrides and deprecated JSON template
