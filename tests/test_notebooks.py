@@ -49,6 +49,8 @@ def test_notebooks_narrative_backend_and_mode_isolation(nb_name: str) -> None:
     full_src = "\n".join(code_sources)
     if nb_name == "02_silao_osint_pipeline.ipynb":
         assert "fetch_rss_feed" not in full_src
+        assert "build_google_news_rss_urls_for_window" in full_src
+        assert "ignore_fetch_errors=True" in full_src
         tree = ast.parse(full_src)
         sample_ifs = [
             node
@@ -67,6 +69,14 @@ def test_notebooks_narrative_backend_and_mode_isolation(nb_name: str) -> None:
         assert 'sample_dir / "incidents.csv"' not in full_src
         assert "sample_feed.xml" not in full_src
         assert "load_incidents_for_mode" in full_src
+        if nb_name == "03_incident_correlation.ipynb":
+            assert "regime_dates=" in full_src
+            assert "control_cols=" in full_src
+            assert "regime_and_trend_audit" in full_src
+        if nb_name == "05_linebuster_roi_study.ipynb":
+            assert "weekdays_only=True" in full_src
+            assert "(7, 8, 9)" in full_src
+            assert "estimate_hourly_bar_throughput" in full_src
 
 
 def test_raw_mode_never_falls_back_to_sample_incidents(tmp_path: Path) -> None:
