@@ -15,6 +15,7 @@ from src.notebook_utils import (
     compute_weighted_dow_summary,
     date_overlap_audit,
     decompose_daily_baseline,
+    filter_incidents_for_analysis,
     load_incidents_for_mode,
     pilot_mde_table,
     placebo_lead_test,
@@ -222,3 +223,87 @@ def test_regime_and_trend_audit_separates_pos_shift_and_weather() -> None:
     ws = audit["weather_vs_street"]
     assert set(reg["regime"]) == {"Pre POS Change", "Post POS Change"}
     assert set(ws["disruption_group"]) == {"Weather", "Street / Traffic / Safety", "No Incident"}
+
+
+def test_filter_incidents_for_analysis_window_centroid_and_distance() -> None:
+    sales_df = pd.DataFrame({"date": pd.date_range("2026-06-01", "2026-06-10", freq="D")})
+    incidents_df = pd.DataFrame(
+        [
+            {
+                "incident_id": "keep-near-gazetteer",
+                "date": "2026-06-05",
+                "lat": 20.9545,
+                "lon": -101.4240,
+                "location_name": "Libramiento Norte, Silao",
+                "geocode_method": "gazetteer",
+            },
+            {
+                "incident_id": "keep-explicit-coord",
+                "date": "2026-06-06",
+                "lat": 20.9510,
+                "lon": -101.4210,
+                "location_name": "Silao",
+                "geocode_method": "explicit",
+            },
+            {
+                "incident_id": "drop-out-of-window",
+                "date": "2026-05-20",
+                "lat": 20.9510,
+                "lon": -101.4210,
+                "location_name": "Libramiento Norte",
+                "geocode_method": "gazetteer",
+            },
+            {
+                "incident_id": "drop-coarse-silao",
+                "date": "2026-06-07",
+                "lat": 20.9500,
+                "lon": -101.4200,
+                "location_name": "silao",
+                "geocode_method": "gazetteer",
+            },
+            {
+                "incident_id": "drop-default-centroid",
+                "date": "2026-06-08",
+                "lat": 20.9500,
+                "lon": -101.4200,
+                "location_name": "Calle Desconocida",
+                "geocode_method": "default_centroid",
+            },
+            {
+                "incident_id": "drop-far-puerto",
+                "date": "2026-06-09",
+                "lat": 20.9960,
+                "lon": -101.4820,
+                "location_name": "Puerto Interior",
+                "geocode_method": "gazetteer",
+            },
+        ]
+    )
+
+    filtered, stats = filter_incidents_for_analysis(
+        incidents_df,
+        sales_df=sales_df,
+        store_lat=20.95,
+        store_lon=-101.42,
+        max_distance_m=5000.0,
+        exclude_coarse_centroids=True,
+    )
+    assert list(filtered["incident_id"]) == ["keep-near-gazetteer", "keep-explicit-coord"]
+    assert stats == {
+        "input_rows": 6,
+        "excluded_out_of_window": 1,
+        "excluded_coarse_centroid": 2,
+        "excluded_out_of_range": 1,
+        "kept_rows": 2,
+    }
+
+    empty_filtered, empty_stats = filter_incidents_for_analysis(
+        incidents_df.iloc[0:0],
+        sales_df=sales_df,
+        store_lat=20.95,
+        store_lon=-101.42,
+        max_distance_m=5000.0,
+        exclude_coarse_centroids=True,
+    )
+    assert empty_filtered.empty
+    assert empty_stats["kept_rows"] == 0

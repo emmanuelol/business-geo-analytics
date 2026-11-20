@@ -53,10 +53,18 @@ def test_notebooks_narrative_backend_and_mode_isolation(nb_name: str) -> None:
         )
     assert "DATA_MODE = cfg.data_mode" in full_src
 
+    md_text = "\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
+    for stale_doc in ("local_assumptions.json", 'BGA_DATA_MODE="sample"', 'BGA_FETCH_LIVE="0"'):
+        assert stale_doc not in md_text, (
+            f"{nb_name} markdown still references stale config text {stale_doc!r}"
+        )
+
     if nb_name == "02_silao_osint_pipeline.ipynb":
         assert "fetch_rss_feed" not in full_src
         assert "build_google_news_rss_urls_for_window" in full_src
         assert "ignore_fetch_errors=True" in full_src
+        assert 'DATA_MODE != "sample"' in full_src or "DATA_MODE != 'sample'" in full_src
+        assert "OSINT_START" in full_src and "OSINT_END" in full_src
         tree = ast.parse(full_src)
         sample_ifs = [
             node
@@ -76,13 +84,18 @@ def test_notebooks_narrative_backend_and_mode_isolation(nb_name: str) -> None:
         assert "sample_feed.xml" not in full_src
         assert "load_incidents_for_mode" in full_src
         if nb_name == "03_incident_correlation.ipynb":
+            assert "filter_incidents_for_analysis" in full_src
             assert "regime_dates=" in full_src
             assert "control_cols=" in full_src
             assert "regime_and_trend_audit" in full_src
+        if nb_name == "04_location_diagnostics.ipynb":
+            assert "filter_incidents_for_analysis" in full_src
+            assert "exclude_coarse_centroids=True" in full_src
         if nb_name == "05_linebuster_roi_study.ipynb":
             assert "weekdays_only=True" in full_src
             assert "(7, 8, 9)" in full_src
             assert "estimate_hourly_bar_throughput" in full_src
+            assert 'c != "gross_margin_pct"' in full_src
 
 
 def test_raw_mode_never_falls_back_to_sample_incidents(tmp_path: Path) -> None:

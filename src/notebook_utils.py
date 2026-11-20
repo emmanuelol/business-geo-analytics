@@ -17,8 +17,12 @@ from scipy import stats
 from src.causal_eval import simulate_linebuster_scenarios
 from src.config import StoreConfig
 from src.osint_collector import load_incidents_file
+from src.spatial_models import haversine_meters
 
 _QUINCENA_DAYS: frozenset[int] = frozenset({1, 14, 15, 16, 28, 29, 30, 31})
+_COARSE_LOCATION_TOKENS: frozenset[str] = frozenset(
+    {"", "default", "silao", "silao gto", "silao guanajuato", "silao guanajuato mexico"}
+)
 
 
 def configure_mpl_env() -> Any:
@@ -87,12 +91,105 @@ def resolve_incidents_path(cfg: StoreConfig, mode: str) -> Path:
         if not proc_path.is_file():
             raise FileNotFoundError(
                 f"Missing {proc_path}. Run notebooks/02_silao_osint_pipeline.ipynb "
-                "with BGA_DATA_MODE=raw first."
+                "with data_mode='raw' in config/local.toml (or BGA_DATA_MODE=raw) first."
             )
         return proc_path
     if proc_path.is_file():
         return proc_path
     return cfg.sample_dir / "incidents.csv"
+
+
+def _is_coarse_centroid_series(incidents_df: pd.DataFrame) -> pd.Series:
+    """Return boolean mask for incidents geocoded only to generic city/default centroids."""
+    is_explicit = (
+        incidents_df["geocode_method"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .eq("explicit")
+        if "geocode_method" in incidents_df.columns
+        else pd.Series(False, index=incidents_df.index, dtype=bool)
+    )
+    is_default = (
+        incidents_df["geocode_method"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .eq("default_centroid")
+        if "geocode_method" in incidents_df.columns
+        else pd.Series(False, index=incidents_df.index, dtype=bool)
+    )
+    if "location_name" in incidents_df.columns:
+        loc_norm = (
+            incidents_df["location_name"]
+            .fillna("")
+            .astype(str)
+            .str.lower()
+            .str.replace(r"[^a-z0-9\s]", " ", regex=True)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+        )
+        coarse_loc = (~is_explicit) & loc_norm.isin(_COARSE_LOCATION_TOKENS)
+    else:
+        coarse_loc = pd.Series(False, index=incidents_df.index, dtype=bool)
+    return is_default | coarse_loc
+
+
+def filter_incidents_for_analysis(
+    incidents_df: pd.DataFrame,
+    *,
+    sales_df: pd.DataFrame | None = None,
+    store_lat: float | None = None,
+    store_lon: float | None = None,
+    max_distance_m: float | None = None,
+    exclude_coarse_centroids: bool = False,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Restrict incidents by sales date window, centroid precision, and max geofence radius."""
+    work = incidents_df.copy()
+    stats: dict[str, int] = {
+        "input_rows": int(len(work)),
+        "excluded_out_of_window": 0,
+        "excluded_coarse_centroid": 0,
+        "excluded_out_of_range": 0,
+        "kept_rows": 0,
+    }
+    if work.empty:
+        return work, stats
+
+    if (
+        sales_df is not None
+        and not sales_df.empty
+        and "date" in sales_df.columns
+        and "date" in work.columns
+    ):
+        s_dates = pd.to_datetime(sales_df["date"], errors="coerce").dropna().dt.normalize()
+        if not s_dates.empty:
+            s_min, s_max = s_dates.min(), s_dates.max()
+            i_dates = pd.to_datetime(work["date"], errors="coerce").dt.normalize()
+            in_win = (i_dates >= s_min) & (i_dates <= s_max)
+            stats["excluded_out_of_window"] = int((~in_win).sum())
+            work = work.loc[in_win].copy()
+
+    if exclude_coarse_centroids and not work.empty:
+        coarse_mask = _is_coarse_centroid_series(work)
+        stats["excluded_coarse_centroid"] = int(coarse_mask.sum())
+        work = work.loc[~coarse_mask].copy()
+
+    if max_distance_m is not None and not work.empty:
+        if store_lat is None or store_lon is None:
+            raise ValueError("store_lat and store_lon are required when max_distance_m is set")
+        lat_col, lon_col = _resolve_lat_lon_cols(work)
+        lats = pd.to_numeric(work[lat_col], errors="coerce").to_numpy(dtype=float)
+        lons = pd.to_numeric(work[lon_col], errors="coerce").to_numpy(dtype=float)
+        dists = haversine_meters(float(store_lat), float(store_lon), lats, lons)
+        in_range = np.isfinite(dists) & (dists <= float(max_distance_m))
+        stats["excluded_out_of_range"] = int((~in_range).sum())
+        work = work.loc[in_range].copy()
+
+    stats["kept_rows"] = int(len(work))
+    return work.reset_index(drop=True), stats
 
 
 def load_incidents_for_mode(

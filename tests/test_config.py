@@ -124,36 +124,40 @@ def test_env_none_clears_linebuster_date(tmp_path: Path) -> None:
 
 
 def test_validation_rejects_invalid_values(tmp_path: Path) -> None:
+    missing_toml = tmp_path / "missing.toml"
     missing = tmp_path / "missing.json"
 
     with pytest.raises(ValueError, match="tablet_channel_interpretation"):
         load_config(
+            config_path=missing_toml,
             assumptions_path=missing,
             env={"BGA_TABLET_CHANNEL_INTERPRETATION": "invalid_mode"},
         )
 
     with pytest.raises(ValueError, match="gross_margin_pct"):
         load_config(
+            config_path=missing_toml,
             assumptions_path=missing,
             env={"BGA_GROSS_MARGIN_PCT": "1.5"},
         )
 
     with pytest.raises(ValueError, match="peak_hours"):
         load_config(
+            config_path=missing_toml,
             assumptions_path=missing,
             env={"BGA_PEAK_HOURS": "4,8,19"},
         )
 
     with pytest.raises(ValueError, match="lat"):
         load_config(
-            config_path=tmp_path / "missing.toml",
+            config_path=missing_toml,
             assumptions_path=missing,
             env={"BGA_LAT": "95.0"},
         )
 
     with pytest.raises(ValueError, match="data_mode"):
         load_config(
-            config_path=tmp_path / "missing.toml",
+            config_path=missing_toml,
             assumptions_path=missing,
             env={"BGA_DATA_MODE": "prod"},
         )
@@ -266,7 +270,11 @@ def test_committed_example_templates_parse_cleanly(tmp_path: Path) -> None:
     ):
         assert required_key in parsed_env
 
-    cfg_from_env = load_config(assumptions_path=tmp_path / "missing.json", env=parsed_env)
+    cfg_from_env = load_config(
+        config_path=tmp_path / "missing.toml",
+        assumptions_path=tmp_path / "missing.json",
+        env=parsed_env,
+    )
     assert cfg_from_env.coords_verified is False
     assert cfg_from_env.linebuster_start_date is None
 
@@ -274,6 +282,10 @@ def test_committed_example_templates_parse_cleanly(tmp_path: Path) -> None:
     assert isinstance(payload, dict)
     assert payload["coords_verified"] is False
     assert payload["linebuster_start_date"] is None
-    cfg_from_json = load_config(assumptions_path=assumptions_example, env={})
+    cfg_from_json = load_config(
+        config_path=tmp_path / "missing.toml",
+        assumptions_path=assumptions_example,
+        env={},
+    )
     assert cfg_from_json.hardware_capex == pytest.approx(float(payload["hardware_capex"]))
     assert cfg_from_json.gross_margin_pct == pytest.approx(float(payload["gross_margin_pct"]))
