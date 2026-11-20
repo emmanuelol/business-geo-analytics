@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:georss="http://www.georss.org/georss">
+  <channel>
+    <title>Noticias Silao Locales</title>
+    <link>https://example.local/silao</link>
+    <description>Fixture RSS feed for offline OSINT tests</description>
+    <item>
+      <guid>rss-001</guid>
+      <title>Accidente vial severo en Libramiento Norte Silao</title>
+      <description>&lt;p&gt;Choque multiple provoca congestion vehicular frente a El Progreso.&lt;/p&gt;</description>
+      <link>https://example.local/news/1</link>
+      <pubDate>Fri, 14 Aug 2026 08:30:00 -0600</pubDate>
+    </item>
+    <item>
+      <guid>rss-002</guid>
+      <title>Cierre total por obras en Blvd. Raul Bailleres</title>
+      <description>Desvio vehicular por pavimentacion en zona centro de Silao.</description>
+      <link>https://example.local/news/2</link>
+      <pubDate>Tue, 18 Aug 2026 09:15:00 -0600</pubDate>
+    </item>
+    <item>
+      <guid>rss-003</guid>
+      <title>Heavy thunderstorm causes flooding near Puerto Interior</title>
+      <description>Intense rain slows evening traffic along main corridor.</description>
+      <link>https://example.local/news/3</link>
+      <pubDate>Thu, 20 Aug 2026 18:45:00 -0600</pubDate>
+      <georss:point>20.9960 -101.4820</georss:point>
+    </item>
+    <item>
+      <guid>rss-004</guid>
+      <title>Operativo policial y acordonamiento en Zona Centro</title>
+      <description>Despliegue de seguridad publica tras incidente en mercado.</description>
+      <link>https://example.local/news/4</link>
+      <pubDate>Sat, 22 Aug 2026 17:10:00 -0600</pubDate>
+    </item>
+    <item>
+      <guid>rss-005</guid>
+      <title>Festival cultural de artesania en Guanajuato</title>
+      <description>Exposicion artistica este fin de semana sin afectaciones viales.</description>
+      <link>https://example.local/news/5</link>
+      <pubDate>Sun, 23 Aug 2026 12:00:00 -0600</pubDate>
+    </item>
+  </channel>
+</rss>
