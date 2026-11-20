@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -26,9 +27,17 @@ _IN_MINIMAL_CONTAINER = not (_REPO_ROOT / ".git").exists() and not (
 
 
 def test_defaults_match_confirmed_values(tmp_path: Path) -> None:
-    cfg = load_config(assumptions_path=tmp_path / "missing.json", env={})
+    cfg = load_config(
+        config_path=tmp_path / "missing.toml",
+        assumptions_path=tmp_path / "missing.json",
+        env={},
+    )
 
     assert isinstance(cfg, StoreConfig)
+    assert cfg.data_mode == "sample"
+    assert cfg.fetch_live is False
+    assert cfg.osint_start is None
+    assert cfg.osint_end is None
     assert cfg.branch_id == "TC-001"
     assert cfg.lat == pytest.approx(20.95)
     assert cfg.lon == pytest.approx(-101.42)
@@ -79,7 +88,11 @@ def test_override_precedence_defaults_lt_json_lt_env(tmp_path: Path) -> None:
         "BGA_TABLET_CHANNEL_INTERPRETATION": "self_service_tablet_rollout",
     }
 
-    cfg = load_config(assumptions_path=assumptions_file, env=env)
+    cfg = load_config(
+        config_path=tmp_path / "missing.toml",
+        assumptions_path=assumptions_file,
+        env=env,
+    )
 
     # Env overrides JSON and defaults
     assert cfg.lat == pytest.approx(20.949999)
@@ -103,6 +116,7 @@ def test_env_none_clears_linebuster_date(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(
+        config_path=tmp_path / "missing.toml",
         assumptions_path=assumptions_file,
         env={"BGA_LINEBUSTER_START_DATE": "none"},
     )
@@ -132,9 +146,67 @@ def test_validation_rejects_invalid_values(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="lat"):
         load_config(
+            config_path=tmp_path / "missing.toml",
             assumptions_path=missing,
             env={"BGA_LAT": "95.0"},
         )
+
+    with pytest.raises(ValueError, match="data_mode"):
+        load_config(
+            config_path=tmp_path / "missing.toml",
+            assumptions_path=missing,
+            env={"BGA_DATA_MODE": "prod"},
+        )
+
+
+def test_layered_toml_precedence_and_empty_env_ignored(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (tmp_path / "data" / "raw").mkdir(parents=True)
+
+    (cfg_dir / "default.toml").write_text(
+        '[runtime]\ndata_mode = "sample"\nfetch_live = false\n\n'
+        '[branch]\nlat = 20.95\nlon = -101.42\ncoords_verified = false\n\n'
+        '[roi]\nhardware_capex = 12000.0\ngross_margin_pct = 0.65\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "raw" / "local_assumptions.json").write_text(
+        json.dumps({"monthly_saas_fee": 900.0, "hardware_capex": 9999.0}),
+        encoding="utf-8",
+    )
+    local_toml = cfg_dir / "local.toml"
+    local_toml.write_text(
+        '[runtime]\ndata_mode = "raw"\nfetch_live = true\n'
+        'osint_start = "2025-10-16"\nosint_end = "2026-11-19"\n\n'
+        '[branch]\nlat = 20.941111\ncoords_verified = true\n\n'
+        '[roi]\nhardware_capex = 3500.0\npeak_labor_cost_per_hr = 0.0\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(
+        repo_root=tmp_path,
+        env={
+            "BGA_DATA_MODE": "",
+            "BGA_HARDWARE_CAPEX": "4200.0",
+        },
+    )
+    assert cfg.data_mode == "raw"
+    assert cfg.fetch_live is True
+    assert cfg.osint_start == "2025-10-16"
+    assert cfg.osint_end == "2026-11-19"
+    assert cfg.lat == pytest.approx(20.941111)
+    assert cfg.coords_verified is True
+    assert cfg.monthly_saas_fee == pytest.approx(900.0)
+    assert cfg.peak_labor_cost_per_hr == pytest.approx(0.0)
+    assert cfg.hardware_capex == pytest.approx(4200.0)
+
+    alt_toml = tmp_path / "custom.toml"
+    alt_toml.write_text('[runtime]\ndata_mode = "sample"\n', encoding="utf-8")
+    cfg_alt = load_config(
+        repo_root=tmp_path,
+        env={"BGA_CONFIG_PATH": str(alt_toml)},
+    )
+    assert cfg_alt.data_mode == "sample"
 
 
 @pytest.mark.skipif(
@@ -143,11 +215,35 @@ def test_validation_rejects_invalid_values(tmp_path: Path) -> None:
 )
 def test_committed_example_templates_parse_cleanly(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
+    default_toml = repo_root / "config" / "default.toml"
+    local_example_toml = repo_root / "config" / "local.example.toml"
     env_example = repo_root / ".env.example"
     assumptions_example = repo_root / "local_assumptions.example.json"
 
+    assert default_toml.is_file(), "Missing config/default.toml"
+    assert local_example_toml.is_file(), "Missing config/local.example.toml"
     assert env_example.is_file(), "Missing .env.example"
     assert assumptions_example.is_file(), "Missing local_assumptions.example.json"
+
+    default_parsed = tomllib.loads(default_toml.read_text(encoding="utf-8"))
+    assert default_parsed["runtime"]["data_mode"] == "sample"
+    assert default_parsed["runtime"]["fetch_live"] is False
+    cfg_default = load_config(
+        config_path=tmp_path / "missing.toml",
+        assumptions_path=tmp_path / "missing.json",
+        env={},
+    )
+    assert cfg_default.data_mode == "sample"
+    assert cfg_default.coords_verified is False
+
+    local_parsed = tomllib.loads(local_example_toml.read_text(encoding="utf-8"))
+    assert "runtime" in local_parsed and "branch" in local_parsed and "roi" in local_parsed
+    cfg_example = load_config(
+        config_path=local_example_toml,
+        assumptions_path=tmp_path / "missing.json",
+        env={},
+    )
+    assert cfg_example.branch_id == "TC-001"
 
     parsed_env: dict[str, str] = {}
     for line in env_example.read_text(encoding="utf-8").splitlines():

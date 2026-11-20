@@ -13,6 +13,7 @@ data/processed/*
 *.db-shm
 
 # Secrets & local configuration
+config/local.toml
 .env
 .env.*
 !.env.example
@@ -20,6 +21,9 @@ data/processed/*
 *.key
 *credentials*.json
 secrets/
+
+# Rendered notebook exports
+notebooks/*.html
 
 # Python & Jupyter artifacts
 __pycache__/

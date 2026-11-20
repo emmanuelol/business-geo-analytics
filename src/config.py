@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+DEFAULT_DATA_MODE = "sample"
+VALID_DATA_MODES = ("sample", "raw")
 DEFAULT_BRANCH_ID = "TC-001"
 # Approximate Silao centroid; replace locally via local_assumptions.json or BGA_LAT/BGA_LON
 DEFAULT_LAT = 20.95
@@ -77,6 +80,11 @@ def _parse_int_tuple(value: Any, field_name: str) -> tuple[int, ...]:
 class StoreConfig:
     """Configuration for a retail storefront, spatial buffers, and ROI simulator."""
 
+    data_mode: str = DEFAULT_DATA_MODE
+    fetch_live: bool = False
+    osint_start: str | None = None
+    osint_end: str | None = None
+
     branch_id: str = DEFAULT_BRANCH_ID
     store_name: str = "The Coffee - Paseo MS"
     city: str = "Silao, Guanajuato, Mexico"
@@ -103,6 +111,14 @@ class StoreConfig:
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root)
+        self.data_mode = str(self.data_mode).strip().lower()
+        if self.data_mode not in VALID_DATA_MODES:
+            raise ValueError(
+                f"data_mode must be one of {VALID_DATA_MODES}, got {self.data_mode!r}"
+            )
+        self.fetch_live = _parse_bool(self.fetch_live, "fetch_live")
+        self.osint_start = _parse_optional_str(self.osint_start)
+        self.osint_end = _parse_optional_str(self.osint_end)
         self.lat = float(self.lat)
         self.lon = float(self.lon)
         self.coords_verified = bool(self.coords_verified)
@@ -176,6 +192,14 @@ class StoreConfig:
     def local_assumptions_path(self) -> Path:
         return self.raw_dir / "local_assumptions.json"
 
+    @property
+    def default_config_path(self) -> Path:
+        return self.repo_root / "config" / "default.toml"
+
+    @property
+    def local_config_path(self) -> Path:
+        return self.repo_root / "config" / "local.toml"
+
     def operating_hour_range(self) -> range:
         """Return inclusive integer hour range (e.g. 6..21 -> range(6, 22))."""
         return range(self.operating_hours[0], self.operating_hours[1] + 1)
@@ -194,6 +218,10 @@ class StoreConfig:
 
 
 _FIELD_PARSERS: dict[str, Any] = {
+    "data_mode": lambda v: str(v).strip().lower(),
+    "fetch_live": lambda v: _parse_bool(v, "fetch_live"),
+    "osint_start": _parse_optional_str,
+    "osint_end": _parse_optional_str,
     "branch_id": str,
     "store_name": str,
     "city": str,
@@ -224,22 +252,38 @@ def _apply_overrides(values: dict[str, Any], raw_overrides: Mapping[str, Any]) -
             values[norm_key] = parser(raw_val)
 
 
+def _load_toml_flat(path: Path) -> dict[str, Any]:
+    payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    flat: dict[str, Any] = {}
+    for key, val in payload.items():
+        if isinstance(val, dict):
+            flat.update(val)
+        else:
+            flat[key] = val
+    return flat
+
+
 def load_config(
     assumptions_path: Path | str | None = None,
     env: Mapping[str, str] | None = None,
     repo_root: Path | str | None = None,
+    config_path: Path | str | None = None,
 ) -> StoreConfig:
-    """Load StoreConfig with precedence: defaults < local_assumptions.json < env BGA_*."""
+    """Load StoreConfig: defaults < default.toml < local_assumptions.json < local.toml < env BGA_*."""
     env_map = os.environ if env is None else env
     resolved_root = (
         Path(repo_root)
         if repo_root is not None
         else Path(env_map["BGA_REPO_ROOT"])
-        if "BGA_REPO_ROOT" in env_map
+        if env_map.get("BGA_REPO_ROOT", "").strip()
         else _default_repo_root()
     )
 
-    defaults = StoreConfig(repo_root=resolved_root).to_dict(include_paths=False)
+    values = StoreConfig(repo_root=resolved_root).to_dict(include_paths=False)
+
+    default_toml = resolved_root / "config" / "default.toml"
+    if default_toml.is_file():
+        _apply_overrides(values, _load_toml_flat(default_toml))
 
     json_path = (
         Path(assumptions_path)
@@ -250,13 +294,26 @@ def load_config(
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"Expected JSON object in {json_path}")
-        _apply_overrides(defaults, payload)
+        _apply_overrides(values, payload)
+
+    env_cfg = env_map.get("BGA_CONFIG_PATH", "").strip()
+    local_toml = (
+        Path(config_path)
+        if config_path is not None
+        else Path(env_cfg)
+        if env_cfg
+        else resolved_root / "config" / "local.toml"
+    )
+    if local_toml.is_file():
+        _apply_overrides(values, _load_toml_flat(local_toml))
 
     env_overrides = {
         k[len("BGA_") :].lower(): v
         for k, v in env_map.items()
-        if k.startswith("BGA_") and k != "BGA_REPO_ROOT"
+        if k.startswith("BGA_")
+        and k not in {"BGA_REPO_ROOT", "BGA_CONFIG_PATH"}
+        and str(v).strip() != ""
     }
-    _apply_overrides(defaults, env_overrides)
+    _apply_overrides(values, env_overrides)
 
-    return StoreConfig(repo_root=resolved_root, **defaults)
+    return StoreConfig(repo_root=resolved_root, **values)

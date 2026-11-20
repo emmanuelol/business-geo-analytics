@@ -1,0 +1,27 @@
+# Copy to config/local.toml (gitignored) to override config/default.toml for your branch.
+# Precedence: config/default.toml < data/raw/local_assumptions.json (deprecated) < config/local.toml < non-empty env BGA_*
+
+[runtime]
+data_mode = "sample"          # "sample" | "raw"
+fetch_live = false            # true enables opt-in Google News RSS collection in Notebook 02
+osint_start = ""              # optional YYYY-MM-DD backfill start (e.g. "2025-10-16")
+osint_end = ""                # optional YYYY-MM-DD backfill end   (e.g. "2026-11-19")
+
+[branch]
+branch_id = "TC-001"
+lat = 20.95                   # replace with verified branch latitude
+lon = -101.42                 # replace with verified branch longitude
+coords_verified = false       # set true only after verifying exact storefront pin
+geofence_radii_m = [500, 1500, 5000]
+operating_hours = [6, 21]
+peak_hours = [8, 9, 18, 19, 20]
+linebuster_start_date = ""    # leave blank for ex-ante modeling; set YYYY-MM-DD when pilot launches
+tablet_channel_start_date = "2026-09-05"
+tablet_channel_interpretation = "pos_channel_change"
+
+[roi]
+hardware_capex = 12000.0
+monthly_saas_fee = 1200.0
+peak_labor_cost_per_hr = 85.0
+gross_margin_pct = 0.65
+currency = "MXN"
