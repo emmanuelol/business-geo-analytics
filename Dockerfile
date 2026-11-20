@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir --disable-pip-version-check uv \
 RUN mkdir -p /app/data/raw /app/data/processed /tmp/bga-matplotlib /tmp/bga-ipython /tmp/bga-jupyter-runtime /tmp/bga-jupyter-data \
     && chown -R appuser:appuser /app /tmp/bga-* /home/appuser
 
+COPY --chown=appuser:appuser pyproject.toml ./
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser notebooks/ ./notebooks/
 COPY --chown=appuser:appuser docs/ ./docs/

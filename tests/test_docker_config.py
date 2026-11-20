@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -79,8 +80,37 @@ def test_dockerfile_security_layering_and_defaults() -> None:
 
     assert not re.search(r"(?m)^COPY\s+(?:--[^\s]+\s+)*\.\s+", text)
     assert "data/raw/" not in text.split("COPY", 1)[1] or "mkdir" in text
+    assert "pyproject.toml" in text
     for required_dir in ("src/", "notebooks/", "docs/", "scripts/", "tests/", "data/sample/"):
         assert required_dir in text
+
+
+def test_pyproject_and_bounded_requirements() -> None:
+    pyproject_path = REPO_ROOT / "pyproject.toml"
+    assert pyproject_path.is_file(), "Missing pyproject.toml"
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert data["project"]["name"] == "business-geo-analytics"
+    assert ">=3.12" in data["project"]["requires-python"]
+    pytest_opts = data["tool"]["pytest"]["ini_options"]
+    assert "." in pytest_opts["pythonpath"]
+    assert "tests" in pytest_opts["testpaths"]
+
+    req_path = REPO_ROOT / "requirements.txt"
+    assert req_path.is_file(), "Missing requirements.txt"
+    req_lines = [
+        ln.strip()
+        for ln in req_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    pkgs = {re.split(r"[<>=!~]", ln, maxsplit=1)[0].lower(): ln for ln in req_lines}
+    for required_pkg in ("pandas", "numpy", "statsmodels", "nbconvert", "jupyterlab", "pytest"):
+        assert required_pkg in pkgs, f"Missing {required_pkg} in requirements.txt"
+
+    for ln in req_lines:
+        assert re.match(
+            r"^[A-Za-z0-9_.-]+>=[0-9.]+,<[0-9.]+$", ln
+        ), f"Requirement must specify lower and upper bounds: {ln}"
 
 
 @pytest.mark.skipif(
