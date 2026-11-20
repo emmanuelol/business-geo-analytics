@@ -11,6 +11,7 @@ import requests
 from src.osint_collector import (
     INCIDENT_CATEGORIES,
     build_google_news_rss_url,
+    build_google_news_rss_urls_for_window,
     build_incident_dataset,
     classify_incident,
     geocode_location,
@@ -131,3 +132,36 @@ def test_offline_gazetteer_and_csv_json_ingestion(tmp_path: Path) -> None:
     )
     assert len(combined) == 6
     assert "url" in build_google_news_rss_url("Silao accidente") or "news.google.com" in build_google_news_rss_url("Silao accidente")
+
+
+def test_windowed_rss_url_builder_and_resilient_fetch_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    urls = build_google_news_rss_urls_for_window(
+        start_date="2026-06-01",
+        end_date="2026-08-15",
+        chunk_days=30,
+    )
+    assert len(urls) == 3
+    assert "after%3A2026-06-01" in urls[0]
+    assert "before%3A2026-07-01" in urls[0]
+    assert "after%3A2026-07-31" in urls[-1]
+
+    sample_xml = Path("tests/fixtures/sample_feed.xml").read_text(encoding="utf-8")
+
+    def _mock_fetch(url: str, **kwargs):
+        if "2026-06-01" in url:
+            raise requests.RequestException("simulated chunk failure")
+        return parse_rss_atom_xml(sample_xml, source_name="MockRSS", relevant_only=True)
+
+    import src.osint_collector as oc
+
+    monkeypatch.setattr(oc, "fetch_rss_feed", _mock_fetch)
+
+    with pytest.raises(requests.RequestException):
+        build_incident_dataset(feed_urls=urls, ignore_fetch_errors=False)
+
+    resilient = build_incident_dataset(
+        feed_urls=urls, ignore_fetch_errors=True, relevant_only=True
+    )
+    assert len(resilient) == 4

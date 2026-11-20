@@ -10,8 +10,9 @@ import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
+import warnings
 from typing import Any
 
 import pandas as pd
@@ -411,6 +412,45 @@ def build_google_news_rss_url(
     return f"https://news.google.com/rss/search?{params}"
 
 
+def build_google_news_rss_urls_for_window(
+    start_date: str | date | datetime,
+    end_date: str | date | datetime,
+    query: str = "Silao Guanajuato (accidente OR cierre OR trafico OR lluvia OR seguridad)",
+    chunk_days: int = 30,
+    hl: str = "es-419",
+    gl: str = "MX",
+) -> list[str]:
+    """Generate date-bounded Google News RSS query URLs across a historical window."""
+    if chunk_days <= 0:
+        raise ValueError(f"chunk_days must be positive, got {chunk_days}")
+    start_d = (
+        start_date.date()
+        if isinstance(start_date, datetime)
+        else start_date
+        if isinstance(start_date, date)
+        else date.fromisoformat(str(start_date)[:10])
+    )
+    end_d = (
+        end_date.date()
+        if isinstance(end_date, datetime)
+        else end_date
+        if isinstance(end_date, date)
+        else date.fromisoformat(str(end_date)[:10])
+    )
+    if end_d < start_d:
+        raise ValueError(f"end_date ({end_d}) must be >= start_date ({start_d})")
+
+    urls: list[str] = []
+    cur = start_d
+    limit_end = end_d + timedelta(days=1)
+    while cur <= end_d:
+        nxt = min(cur + timedelta(days=chunk_days), limit_end)
+        chunk_query = f"{query} after:{cur.isoformat()} before:{nxt.isoformat()}"
+        urls.append(build_google_news_rss_url(query=chunk_query, hl=hl, gl=gl))
+        cur = nxt
+    return urls
+
+
 def fetch_rss_feed(
     url: str,
     source_name: str | None = None,
@@ -473,6 +513,7 @@ def build_incident_dataset(
     feed_urls: Sequence[str] = (),
     use_nominatim: bool = False,
     relevant_only: bool = True,
+    ignore_fetch_errors: bool = False,
 ) -> pd.DataFrame:
     """Combine XML feeds, CSV/JSON files, and optional live URLs into one clean DataFrame."""
     frames: list[pd.DataFrame] = []
@@ -492,11 +533,16 @@ def build_incident_dataset(
             )
         )
     for url in feed_urls:
-        frames.append(
-            fetch_rss_feed(
-                url, use_nominatim=use_nominatim, relevant_only=relevant_only
+        try:
+            frames.append(
+                fetch_rss_feed(
+                    url, use_nominatim=use_nominatim, relevant_only=relevant_only
+                )
             )
-        )
+        except Exception as exc:
+            if not ignore_fetch_errors:
+                raise
+            warnings.warn(f"Skipping failed RSS URL {url}: {exc}", RuntimeWarning, stacklevel=2)
 
     non_empty = [f for f in frames if not f.empty]
     if not non_empty:
