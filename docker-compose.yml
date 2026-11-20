@@ -7,8 +7,10 @@ services:
     ports:
       - "8888:8888"
     environment:
-      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+      - BGA_DATA_MODE
+      - BGA_CONFIG_PATH
     volumes:
+      - ./config:/app/config:ro
       - ./data/processed:/app/data/processed
       - ./data/raw:/app/data/raw:ro
     restart: unless-stopped
@@ -20,8 +22,10 @@ services:
     image: business-geo-analytics:latest
     profiles: ["tools"]
     environment:
-      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+      - BGA_DATA_MODE
+      - BGA_CONFIG_PATH
     volumes:
+      - ./config:/app/config:ro
       - ./data/processed:/app/data/processed
       - ./data/raw:/app/data/raw:ro
     command: ["sh", "-c", "pytest -q && python scripts/verify_repo.py"]
@@ -33,13 +37,15 @@ services:
     image: business-geo-analytics:latest
     profiles: ["tools"]
     environment:
-      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+      - BGA_DATA_MODE
+      - BGA_CONFIG_PATH
     volumes:
+      - ./config:/app/config:ro
       - ./data/processed:/app/data/processed
       - ./data/raw:/app/data/raw:ro
     command:
       [
         "python",
         "-c",
-        "import os; from src.report import generate_franchise_report; res = generate_franchise_report(mode=os.environ.get('BGA_DATA_MODE', 'sample')); print(res['output_path'])",
+        "from src.config import load_config; from src.report import generate_franchise_report; cfg = load_config(); res = generate_franchise_report(mode=cfg.data_mode, config=cfg); print(res['output_path'])",
       ]

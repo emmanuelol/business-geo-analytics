@@ -5,7 +5,6 @@ ARG GID=1000
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    BGA_DATA_MODE=sample \
     MPLCONFIGDIR=/tmp/bga-matplotlib \
     IPYTHONDIR=/tmp/bga-ipython \
     JUPYTER_RUNTIME_DIR=/tmp/bga-jupyter-runtime \
@@ -25,6 +24,7 @@ RUN mkdir -p /app/data/raw /app/data/processed /tmp/bga-matplotlib /tmp/bga-ipyt
     && chown -R appuser:appuser /app /tmp/bga-* /home/appuser
 
 COPY --chown=appuser:appuser pyproject.toml ./
+COPY --chown=appuser:appuser config/default.toml ./config/default.toml
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser notebooks/ ./notebooks/
 COPY --chown=appuser:appuser docs/ ./docs/

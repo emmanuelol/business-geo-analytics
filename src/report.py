@@ -118,7 +118,7 @@ def _load_inputs_for_mode(
 
 
 def generate_franchise_report(
-    mode: str = "sample",
+    mode: str | None = None,
     config: StoreConfig | None = None,
     output_path: Path | str | None = None,
     template_path: Path | str | None = None,
@@ -126,7 +126,7 @@ def generate_franchise_report(
 ) -> dict[str, Any]:
     """Populate executive report template and write output safely to data/processed/."""
     cfg = config or load_config()
-    norm_mode = mode.strip().lower()
+    norm_mode = (mode if mode is not None else cfg.data_mode).strip().lower()
 
     resolved_output = (
         Path(output_path)

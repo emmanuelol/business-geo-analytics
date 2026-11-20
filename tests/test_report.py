@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import load_config
+from src.config import StoreConfig, load_config
 from src.report import generate_franchise_report
 
 
@@ -63,3 +63,17 @@ def test_raw_report_cannot_be_written_outside_processed_dir(tmp_path: Path) -> N
             config=cfg,
             output_path=outside,
         )
+
+
+def test_generate_franchise_report_uses_config_data_mode_when_mode_omitted(
+    tmp_path: Path,
+) -> None:
+    cfg_sample = StoreConfig(data_mode="sample")
+    out_file = tmp_path / "cfg_sample_report.md"
+    res = generate_franchise_report(config=cfg_sample, output_path=out_file)
+    assert res["mode"] == "sample"
+    assert out_file.is_file()
+
+    cfg_raw = StoreConfig(data_mode="raw")
+    with pytest.raises(ValueError, match="data/processed"):
+        generate_franchise_report(config=cfg_raw, output_path=tmp_path / "outside.md")

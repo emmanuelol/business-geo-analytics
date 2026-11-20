@@ -38,6 +38,8 @@ def test_dockerignore_blocks_sensitive_and_ephemeral_paths() -> None:
         "*.sqlite3",
         "*.db-wal",
         "*.db-shm",
+        "config/local.toml",
+        "notebooks/*.html",
         ".env",
         "__pycache__/",
         ".pytest_cache/",
@@ -62,7 +64,7 @@ def test_dockerfile_security_layering_and_defaults() -> None:
     text = df_path.read_text(encoding="utf-8")
 
     assert "FROM python:3.12-slim" in text
-    assert "BGA_DATA_MODE=sample" in text
+    assert "BGA_DATA_MODE=" not in text
     assert "EXPOSE 8888" in text
     assert "HEALTHCHECK" in text
     assert "--ip=0.0.0.0" in text
@@ -80,6 +82,8 @@ def test_dockerfile_security_layering_and_defaults() -> None:
 
     assert not re.search(r"(?m)^COPY\s+(?:--[^\s]+\s+)*\.\s+", text)
     assert "data/raw/" not in text.split("COPY", 1)[1] or "mkdir" in text
+    assert "config/local.toml" not in text
+    assert "COPY --chown=appuser:appuser config/default.toml ./config/default.toml" in text
     assert "pyproject.toml" in text
     for required_dir in ("src/", "notebooks/", "docs/", "scripts/", "tests/", "data/sample/"):
         assert required_dir in text
@@ -126,19 +130,21 @@ def test_docker_compose_services_and_readonly_raw_mount() -> None:
         assert svc in text, f"Missing service {svc} in docker-compose.yml"
 
     assert "8888:8888" in text
-    assert "BGA_DATA_MODE=${BGA_DATA_MODE:-sample}" in text
+    assert "BGA_DATA_MODE=${BGA_DATA_MODE:-sample}" not in text
     assert 'profiles: ["tools"]' in text or "- tools" in text
     assert "./data/processed:/app/data/processed" in text
     assert "./data/raw:/app/data/raw:ro" in text
+    assert "./config:/app/config:ro" in text
 
-    raw_mounts = re.findall(r"[^\s'\"]*data/raw[^\s'\"]*", text)
-    assert raw_mounts
-    for mount in raw_mounts:
+    ro_mounts = re.findall(r"[^\s'\"]*(?:data/raw|:/app/config)[^\s'\"]*", text)
+    assert ro_mounts
+    for mount in ro_mounts:
         if ":" in mount:
-            assert mount.endswith(":ro"), f"data/raw mount is not read-only: {mount}"
+            assert mount.endswith(":ro"), f"Mount is not read-only: {mount}"
 
     assert "pytest" in text
     assert "scripts/verify_repo.py" in text
+    assert "load_config()" in text
     assert "src.report" in text or "src/report.py" in text
 
 
@@ -158,7 +164,10 @@ def test_readme_documents_docker_quickstart() -> None:
     reason="Container isolation runtime checks only apply inside the built Docker image",
 )
 def test_container_runtime_non_root_and_clean_context() -> None:
+    from src.config import load_config
+
     assert os.geteuid() != 0, "Container must execute as non-root user"
     assert not (REPO_ROOT / ".git").exists()
     assert not (REPO_ROOT / ".env").exists()
-    assert os.environ.get("BGA_DATA_MODE", "sample") == "sample"
+    assert (REPO_ROOT / "config" / "default.toml").is_file()
+    assert load_config(repo_root=REPO_ROOT).data_mode in {"sample", "raw"}
