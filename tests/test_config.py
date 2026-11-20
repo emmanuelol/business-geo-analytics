@@ -130,3 +130,45 @@ def test_validation_rejects_invalid_values(tmp_path: Path) -> None:
             assumptions_path=missing,
             env={"BGA_LAT": "95.0"},
         )
+
+
+def test_committed_example_templates_parse_cleanly(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    env_example = repo_root / ".env.example"
+    assumptions_example = repo_root / "local_assumptions.example.json"
+
+    assert env_example.is_file(), "Missing .env.example"
+    assert assumptions_example.is_file(), "Missing local_assumptions.example.json"
+
+    parsed_env: dict[str, str] = {}
+    for line in env_example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        k, v = stripped.split("=", 1)
+        parsed_env[k.strip()] = v.strip()
+
+    for required_key in (
+        "BGA_DATA_MODE",
+        "BGA_LAT",
+        "BGA_LON",
+        "BGA_COORDS_VERIFIED",
+        "BGA_HARDWARE_CAPEX",
+        "BGA_MONTHLY_SAAS_FEE",
+        "BGA_PEAK_LABOR_COST_PER_HR",
+        "BGA_GROSS_MARGIN_PCT",
+        "BGA_LINEBUSTER_START_DATE",
+    ):
+        assert required_key in parsed_env
+
+    cfg_from_env = load_config(assumptions_path=tmp_path / "missing.json", env=parsed_env)
+    assert cfg_from_env.coords_verified is False
+    assert cfg_from_env.linebuster_start_date is None
+
+    payload = json.loads(assumptions_example.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    assert payload["coords_verified"] is False
+    assert payload["linebuster_start_date"] is None
+    cfg_from_json = load_config(assumptions_path=assumptions_example, env={})
+    assert cfg_from_json.hardware_capex == pytest.approx(float(payload["hardware_capex"]))
+    assert cfg_from_json.gross_margin_pct == pytest.approx(float(payload["gross_margin_pct"]))

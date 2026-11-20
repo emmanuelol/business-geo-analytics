@@ -87,6 +87,17 @@ def _check_gitignore_and_no_db_leak(repo_root: Path) -> None:
     print("[OK] Zero .db/.sqlite files visible in git status.")
 
 
+def _check_config_templates(repo_root: Path) -> None:
+    if not (repo_root / ".git").exists():
+        return
+    env_tpl = repo_root / ".env.example"
+    json_tpl = repo_root / "local_assumptions.example.json"
+    assert env_tpl.is_file(), f"Missing {env_tpl}"
+    assert json_tpl.is_file(), f"Missing {json_tpl}"
+    load_config(assumptions_path=json_tpl, env={})
+    print("[OK] Config templates (.env.example, local_assumptions.example.json) verified.")
+
+
 def _check_readonly_databases(cfg) -> None:
     if cfg.master_sales_db_path.is_file():
         ms_schema = inspect_schema(cfg.master_sales_db_path, db_kind="master_sales")
@@ -181,6 +192,7 @@ def _run_smoke_pipeline(daily: pd.DataFrame, hourly: pd.DataFrame, cfg, label: s
 def main() -> int:
     cfg = load_config(repo_root=REPO_ROOT)
     _check_gitignore_and_no_db_leak(REPO_ROOT)
+    _check_config_templates(REPO_ROOT)
     _check_sample_generation(cfg)
 
     sample_daily = pd.read_csv(cfg.sample_dir / "daily_sales.csv", parse_dates=["date"])

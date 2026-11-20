@@ -80,7 +80,7 @@ BGA_DATA_MODE=raw docker compose --profile tools run --rm report
 To analyze a private local store (benchmark: **The Coffee – Paseo MS**, `TC-001`, Silao, Guanajuato):
 
 1. Place `master_sales.db` and `kiosk.db` inside `data/raw/` (strictly gitignored).
-2. Override approximate coordinates (`20.95, -101.42`, `coords_verified=False`) and ROI placeholders via `data/raw/local_assumptions.json` (gitignored) or `BGA_*` environment variables.
+2. Copy [`local_assumptions.example.json`](local_assumptions.example.json) to `data/raw/local_assumptions.json` (gitignored) and/or [`.env.example`](.env.example) to `.env` (gitignored) to override approximate coordinates (`20.95, -101.42`, `coords_verified=False`) and ROI placeholders via `BGA_*` environment variables.
    - Override precedence: `defaults < data/raw/local_assumptions.json < env BGA_*`
 3. Set `BGA_DATA_MODE=raw` when running notebooks or generating a local executive report into `data/processed/` (gitignored):
 
@@ -118,3 +118,4 @@ BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise
 - [`docs/methodology.md`](docs/methodology.md): Statistical, spatial, and causal methodology
 - [`notebooks/`](notebooks/): 5 interactive analysis notebooks (`01` through `05`)
 - [`scripts/verify_repo.py`](scripts/verify_repo.py): Git-ignore, read-only schema, sample parity, and end-to-end smoke checks
+- [`.env.example`](.env.example) & [`local_assumptions.example.json`](local_assumptions.example.json): Templates for `BGA_*` environment overrides and `data/raw/local_assumptions.json`

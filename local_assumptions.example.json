@@ -1,0 +1,21 @@
+{
+  "branch_id": "TC-001",
+  "store_name": "The Coffee - Paseo MS",
+  "city": "Silao, Guanajuato, Mexico",
+  "address": "Libramiento Nte. 3365, El Progreso, Silao, Guanajuato",
+  "lat": 20.95,
+  "lon": -101.42,
+  "coords_verified": false,
+  "geofence_radii_m": [500, 1500, 5000],
+  "operating_hours": [6, 21],
+  "peak_hours": [8, 9, 18, 19, 20],
+  "linebuster_start_date": null,
+  "tablet_channel_start_date": "2026-09-05",
+  "tablet_channel_interpretation": "pos_channel_change",
+  "items_coverage_end_date": "2026-08-20",
+  "hardware_capex": 12000.0,
+  "monthly_saas_fee": 1200.0,
+  "peak_labor_cost_per_hr": 85.0,
+  "gross_margin_pct": 0.65,
+  "currency": "MXN"
+}
