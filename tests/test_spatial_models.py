@@ -150,3 +150,57 @@ def test_hourly_join_and_geofence_sensitivity() -> None:
         hourly_df, value_col="volume", extra_group_cols=["hour_int"]
     )
     assert "residual_volume" in res_only.columns
+
+
+def test_regime_shift_quincena_and_lag_controls_isolate_shock() -> None:
+    rng = np.random.default_rng(99)
+    dates = pd.date_range("2026-06-01", periods=120, freq="D")
+    regime_date = pd.Timestamp("2026-07-31")
+    is_post = (dates >= regime_date).astype(float)
+    is_quincena = dates.day.isin({1, 14, 15, 16, 28, 29, 30, 31}).astype(float)
+
+    base = 4000.0 * (1.0 - 0.25 * is_post + 0.12 * is_quincena)
+    inc_indices = [70, 78, 86, 94, 102, 110]
+    inc_dates = dates[inc_indices]
+    incidents = pd.DataFrame(
+        {
+            "incident_id": [f"R-{i}" for i in range(len(inc_dates))],
+            "date": inc_dates.strftime("%Y-%m-%d"),
+            "hour_int": 9,
+            "category": "traffic_accident",
+            "severity": 1.0,
+            "lat": 20.95,
+            "lon": -101.42,
+        }
+    )
+
+    shock = np.zeros(len(dates))
+    shock[inc_indices] = -0.18
+    revenue = base * (1.0 + shock) + rng.normal(0.0, 20.0, size=len(dates))
+    sales = pd.DataFrame(
+        {
+            "date": dates,
+            "revenue": revenue,
+            "is_post_regime": is_post,
+            "is_quincena": is_quincena,
+        }
+    )
+
+    joined_ctrl = join_sales_with_incidents(
+        sales_df=sales,
+        incidents_df=incidents,
+        store_lat=20.95,
+        store_lon=-101.42,
+        regime_dates=[str(regime_date.date())],
+        include_quincena=True,
+        holiday_dates="mx",
+    )
+    lags_ctrl = estimate_lag_effects(
+        joined_ctrl,
+        outcome_col="residual_pct",
+        lags=(0, 1, 2),
+        control_cols=("is_post_regime", "is_quincena"),
+    )
+    lag0 = lags_ctrl.loc[lags_ctrl["lag"] == 0].iloc[0]
+    assert lag0["coef"] == pytest.approx(-0.18, abs=0.05)
+    assert lag0["p_value"] < 0.01

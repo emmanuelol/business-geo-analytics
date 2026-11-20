@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,10 @@ from scipy import stats
 from src.config import GEOFENCE_RADII_M
 
 _EARTH_RADIUS_M = 6_371_000.0
+_QUINCENA_DAYS: frozenset[int] = frozenset({1, 14, 15, 16, 28, 29, 30, 31})
+MX_FIXED_HOLIDAYS: frozenset[tuple[int, int]] = frozenset(
+    {(1, 1), (2, 5), (3, 21), (5, 1), (9, 16), (11, 20), (12, 25)}
+)
 
 
 def haversine_meters(
@@ -133,13 +137,65 @@ def enrich_incidents_spatial(
     return df
 
 
+def _append_calendar_controls(
+    df: pd.DataFrame,
+    date_col: str,
+    design_parts: list[pd.DataFrame],
+    regime_dates: Iterable[str | pd.Timestamp] | None,
+    include_quincena: bool,
+    holiday_dates: Iterable[str | pd.Timestamp] | str | None,
+    control_cols: Sequence[str] | None,
+) -> None:
+    if regime_dates:
+        for idx, rd in enumerate(regime_dates):
+            cutoff = pd.Timestamp(rd)
+            design_parts.append(
+                pd.DataFrame(
+                    {f"_regime_{idx}": (df[date_col] >= cutoff).astype(float)},
+                    index=df.index,
+                )
+            )
+    if include_quincena:
+        q_flag = df[date_col].dt.day.isin(_QUINCENA_DAYS).astype(float)
+        if "is_quincena" not in df.columns:
+            df["is_quincena"] = q_flag.astype(bool)
+        design_parts.append(pd.DataFrame({"_quincena": q_flag}, index=df.index))
+
+    if holiday_dates is not None:
+        if isinstance(holiday_dates, str) and holiday_dates.lower() == "mx":
+            h_flag = pd.Series(
+                [
+                    (int(m), int(d)) in MX_FIXED_HOLIDAYS
+                    for m, d in zip(df[date_col].dt.month, df[date_col].dt.day)
+                ],
+                index=df.index,
+                dtype=float,
+            )
+        else:
+            hol_set = {pd.Timestamp(h).normalize() for h in holiday_dates}
+            h_flag = df[date_col].dt.normalize().isin(hol_set).astype(float)
+        if "is_holiday" not in df.columns:
+            df["is_holiday"] = h_flag.astype(bool)
+        design_parts.append(pd.DataFrame({"_holiday": h_flag}, index=df.index))
+
+    if control_cols:
+        for col in control_cols:
+            if col in df.columns:
+                vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype(float)
+                design_parts.append(pd.DataFrame({f"_ctrl_{col}": vals}, index=df.index))
+
+
 def compute_sales_residuals(
     sales_df: pd.DataFrame,
     value_col: str = "revenue",
     date_col: str = "date",
     extra_group_cols: Sequence[str] | None = None,
+    regime_dates: Iterable[str | pd.Timestamp] | None = None,
+    include_quincena: bool = False,
+    holiday_dates: Iterable[str | pd.Timestamp] | str | None = None,
+    control_cols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Estimate baseline expected sales via OLS (trend + day-of-week + optional group) and residuals."""
+    """Estimate baseline expected sales via OLS (trend + DOW + optional controls) and residuals."""
     df = sales_df.copy()
     df[date_col] = pd.to_datetime(df[date_col])
     y = pd.to_numeric(df[value_col], errors="coerce").to_numpy(dtype=float)
@@ -170,6 +226,15 @@ def compute_sales_residuals(
             design_parts.append(
                 pd.get_dummies(df[col], prefix=str(col), drop_first=True, dtype=float)
             )
+    _append_calendar_controls(
+        df=df,
+        date_col=date_col,
+        design_parts=design_parts,
+        regime_dates=regime_dates,
+        include_quincena=include_quincena,
+        holiday_dates=holiday_dates,
+        control_cols=control_cols,
+    )
 
     X = pd.concat(design_parts, axis=1).to_numpy(dtype=float)
     beta, *_ = np.linalg.lstsq(X[valid], y[valid], rcond=None)
@@ -230,6 +295,10 @@ def join_sales_with_incidents(
     max_distance_m: float | None = 5000.0,
     value_col: str = "revenue",
     lags: Sequence[int] = (0, 1, 2),
+    regime_dates: Iterable[str | pd.Timestamp] | None = None,
+    include_quincena: bool = False,
+    holiday_dates: Iterable[str | pd.Timestamp] | str | None = None,
+    residual_control_cols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Join sales residuals with geo-fenced incident exposure and chronological lag t..t+k."""
     freq_norm = freq.upper()
@@ -238,7 +307,14 @@ def join_sales_with_incidents(
 
     extra_cols = ["hour_int"] if freq_norm == "H" and "hour_int" in sales_df.columns else None
     sales = compute_sales_residuals(
-        sales_df, value_col=value_col, date_col="date", extra_group_cols=extra_cols
+        sales_df,
+        value_col=value_col,
+        date_col="date",
+        extra_group_cols=extra_cols,
+        regime_dates=regime_dates,
+        include_quincena=include_quincena,
+        holiday_dates=holiday_dates,
+        control_cols=residual_control_cols,
     )
 
     enriched = enrich_incidents_spatial(
@@ -307,14 +383,17 @@ def estimate_lag_effects(
     outcome_col: str = "residual_pct",
     exposure_prefix: str = "incident_exposure_lag",
     lags: Sequence[int] = (0, 1, 2),
+    control_cols: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Estimate joint OLS impact of t, t+1, t+2 incident exposure on sales residuals."""
     lag_list = [int(k) for k in lags]
     cols = [f"{exposure_prefix}{k}" for k in lag_list]
-    work = joined_df[[outcome_col] + cols].dropna().copy()
+    ctrl_list = [c for c in control_cols if c in joined_df.columns]
+    work = joined_df[[outcome_col] + cols + ctrl_list].dropna().copy()
 
     n_obs = len(work)
-    if n_obs <= len(lag_list) + 1:
+    n_params = 1 + len(lag_list) + len(ctrl_list)
+    if n_obs <= n_params:
         return pd.DataFrame(
             [
                 {
@@ -333,8 +412,10 @@ def estimate_lag_effects(
         )
 
     y = work[outcome_col].to_numpy(dtype=float)
-    X_raw = work[cols].to_numpy(dtype=float)
-    X = np.column_stack([np.ones(n_obs, dtype=float), X_raw])
+    X_parts = [np.ones(n_obs, dtype=float), work[cols].to_numpy(dtype=float)]
+    if ctrl_list:
+        X_parts.append(work[ctrl_list].astype(float).to_numpy(dtype=float))
+    X = np.column_stack(X_parts)
 
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
     resid = y - X @ beta
