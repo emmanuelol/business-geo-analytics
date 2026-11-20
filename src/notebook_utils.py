@@ -520,16 +520,27 @@ def pilot_mde_table(
     clean_hourly_df: pd.DataFrame,
     peak_hours: Sequence[int],
     horizons_days: Sequence[int] = (14, 28, 42, 56, 84),
+    weekdays_only: bool = False,
 ) -> pd.DataFrame:
     """Compute two-sided alpha=0.05, 80% power MDE% for daily and peak-hour revenue."""
-    daily_rev = pd.to_numeric(clean_daily_df["revenue"], errors="coerce").dropna()
-    mu_daily = float(daily_rev.mean()) if not daily_rev.empty else np.nan
-    sd_daily = float(daily_rev.std(ddof=1)) if len(daily_rev) > 1 else np.nan
+    daily_work = clean_daily_df.copy()
+    daily_work["date"] = pd.to_datetime(daily_work["date"], errors="coerce")
+    daily_work = daily_work.dropna(subset=["date"])
 
     hr = clean_hourly_df.copy()
     hr["date"] = pd.to_datetime(hr["date"], errors="coerce").dt.normalize()
     hr["hour_int"] = pd.to_numeric(hr["hour_int"], errors="coerce")
     hr["volume"] = pd.to_numeric(hr["volume"], errors="coerce").fillna(0.0)
+    hr = hr.dropna(subset=["date"])
+
+    if weekdays_only:
+        daily_work = daily_work[daily_work["date"].dt.day_of_week < 5]
+        hr = hr[hr["date"].dt.day_of_week < 5]
+
+    daily_rev = pd.to_numeric(daily_work["revenue"], errors="coerce").dropna()
+    mu_daily = float(daily_rev.mean()) if not daily_rev.empty else np.nan
+    sd_daily = float(daily_rev.std(ddof=1)) if len(daily_rev) > 1 else np.nan
+
     peak_daily = (
         hr[hr["hour_int"].isin(set(int(h) for h in peak_hours))]
         .groupby("date")["volume"]
@@ -539,7 +550,8 @@ def pilot_mde_table(
     sd_peak = float(peak_daily.std(ddof=1)) if len(peak_daily) > 1 else np.nan
 
     z_sum = 1.96 + 0.84
-    rows: list[dict[str, float | int]] = []
+    scope_label = "Mon-Fri" if weekdays_only else "Mon-Sun"
+    rows: list[dict[str, float | int | str]] = []
     for days in horizons_days:
         t_val = int(days)
         factor = z_sum * math.sqrt(2.0 / t_val)
@@ -547,7 +559,9 @@ def pilot_mde_table(
         peak_abs = factor * sd_peak if np.isfinite(sd_peak) else np.nan
         rows.append(
             {
+                "schedule_scope": scope_label,
                 "pilot_days": t_val,
+                "calendar_weeks": round(t_val / 5.0 if weekdays_only else t_val / 7.0, 1),
                 "daily_mde_abs": round(daily_abs, 2) if np.isfinite(daily_abs) else np.nan,
                 "daily_mde_pct": round(daily_abs / mu_daily, 4)
                 if np.isfinite(daily_abs) and mu_daily > 0
@@ -559,3 +573,58 @@ def pilot_mde_table(
             }
         )
     return pd.DataFrame(rows)
+
+
+def regime_and_trend_audit(
+    joined_df: pd.DataFrame, tablet_start_date: str
+) -> dict[str, pd.DataFrame]:
+    """Separate post-POS regime shifts from acute weather vs street-incident shocks."""
+    work = joined_df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work = work.dropna(subset=["date"]).copy()
+    cutoff = pd.Timestamp(tablet_start_date)
+    work["regime"] = np.where(
+        work["date"] >= cutoff, "Post POS Change", "Pre POS Change"
+    )
+    has_inc = (
+        work["has_incident_lag0"].fillna(False).astype(bool)
+        if "has_incident_lag0" in work.columns
+        else pd.Series(False, index=work.index)
+    )
+    work["_inc"] = has_inc.astype(int)
+
+    reg_agg: dict[str, Any] = {
+        "days": ("date", "count"),
+        "mean_residual_pct": ("residual_pct", "mean"),
+        "incident_days": ("_inc", "sum"),
+    }
+    if "revenue" in work.columns:
+        reg_agg["mean_revenue"] = ("revenue", "mean")
+    regime_tbl = work.groupby("regime", as_index=False).agg(**reg_agg)
+    regime_tbl["incident_share"] = np.where(
+        regime_tbl["days"] > 0,
+        regime_tbl["incident_days"] / regime_tbl["days"],
+        0.0,
+    )
+
+    cat_col = (
+        work["primary_category_lag0"].fillna("none").astype(str)
+        if "primary_category_lag0" in work.columns
+        else pd.Series("none", index=work.index)
+    )
+    work["disruption_group"] = np.where(
+        ~has_inc,
+        "No Incident",
+        np.where(cat_col == "weather_disruption", "Weather", "Street / Traffic / Safety"),
+    )
+    ws_tbl = (
+        work.groupby("disruption_group", as_index=False)["residual_pct"]
+        .agg(
+            days="count",
+            mean_residual_pct="mean",
+            std_residual_pct=lambda s: float(s.std(ddof=1)) if len(s) > 1 else np.nan,
+        )
+        .sort_values("mean_residual_pct")
+        .reset_index(drop=True)
+    )
+    return {"regime_summary": regime_tbl, "weather_vs_street": ws_tbl}

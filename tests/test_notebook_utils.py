@@ -19,6 +19,7 @@ from src.notebook_utils import (
     pilot_mde_table,
     placebo_lead_test,
     quadrant_summary,
+    regime_and_trend_audit,
     resolve_incidents_path,
     ring_confidence_intervals,
     split_weekday_weekend_hourly,
@@ -192,3 +193,32 @@ def test_spatial_ci_quadrants_and_linebuster_stress_mde() -> None:
     assert list(mde["pilot_days"]) == [14, 28, 42, 56, 84]
     assert mde["daily_mde_pct"].is_monotonic_decreasing
     assert mde["peak_mde_pct"].is_monotonic_decreasing
+
+    mde_mf = pilot_mde_table(
+        clean_daily, hourly, peak_hours=(7, 8, 9), weekdays_only=True
+    )
+    assert list(mde_mf["pilot_days"]) == [14, 28, 42, 56, 84]
+    assert (mde_mf["schedule_scope"] == "Mon-Fri").all()
+    assert mde_mf["peak_mde_pct"].is_monotonic_decreasing
+
+
+def test_regime_and_trend_audit_separates_pos_shift_and_weather() -> None:
+    dates = pd.date_range("2026-08-20", periods=30, freq="D")
+    joined = pd.DataFrame(
+        {
+            "date": dates,
+            "revenue": np.where(dates >= pd.Timestamp("2026-09-05"), 3200.0, 4000.0),
+            "residual_pct": np.where(dates >= pd.Timestamp("2026-09-05"), -0.08, 0.02),
+            "has_incident_lag0": dates.day.isin([25, 10]),
+            "primary_category_lag0": np.where(
+                dates.day == 25,
+                "weather_disruption",
+                np.where(dates.day == 10, "traffic_accident", None),
+            ),
+        }
+    )
+    audit = regime_and_trend_audit(joined, tablet_start_date="2026-09-05")
+    reg = audit["regime_summary"]
+    ws = audit["weather_vs_street"]
+    assert set(reg["regime"]) == {"Pre POS Change", "Post POS Change"}
+    assert set(ws["disruption_group"]) == {"Weather", "Street / Traffic / Safety", "No Incident"}
