@@ -97,7 +97,8 @@ def connect_readonly(db_path: Path | str) -> sqlite3.Connection:
     resolved = Path(db_path).resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"SQLite database not found: {resolved}")
-    conn = sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro", uri=True)
+    base_uri = resolved.as_uri()
+    conn = sqlite3.connect(f"{base_uri}?mode=ro", uri=True)
     try:
         conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
         return conn
@@ -106,7 +107,7 @@ def connect_readonly(db_path: Path | str) -> sqlite3.Connection:
         if "readonly database" not in str(exc).lower():
             raise
         # WAL databases on read-only mounts (:ro) lack writable -shm; immutable=1 allows read-only access
-        return sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro&immutable=1", uri=True)
+        return sqlite3.connect(f"{base_uri}?mode=ro&immutable=1", uri=True)
 
 
 def _validate_table_access(table_name: str, db_kind: str) -> str:
@@ -160,19 +161,31 @@ def read_allowlisted_table(
 ) -> pd.DataFrame:
     """Read an allowlisted SQLite table in read-only mode."""
     validated = _validate_table_access(table_name, db_kind)
+    if columns is not None and len(columns) == 0:
+        raise ValueError("columns cannot be empty")
     conn = connect_readonly(db_path)
     try:
         if db_kind == "kiosk" and validated == "active_branches":
             allowed_cols = ACTIVE_BRANCHES_SAFE_COLUMNS
-            selected = (
-                [c for c in columns if c in allowed_cols]
-                if columns is not None
-                else list(allowed_cols)
-            )
+            if columns is not None:
+                disallowed = [c for c in columns if c not in allowed_cols]
+                if disallowed:
+                    raise RestrictedTableError(
+                        f"Column(s) not permitted on {validated!r}: {disallowed}"
+                    )
+                selected = list(columns)
+            else:
+                selected = list(allowed_cols)
             col_sql = ", ".join(f'"{c}"' for c in selected)
             return pd.read_sql_query(f'SELECT {col_sql} FROM "{validated}"', conn)
 
         if columns is not None:
+            table_cols = {
+                row[1] for row in conn.execute(f'PRAGMA table_info("{validated}")')
+            }
+            unknown = [c for c in columns if c not in table_cols]
+            if unknown:
+                raise ValueError(f"Unknown column(s) for {validated!r}: {unknown}")
             col_sql = ", ".join(f'"{c}"' for c in columns)
             return pd.read_sql_query(f'SELECT {col_sql} FROM "{validated}"', conn)
         return pd.read_sql_query(f'SELECT * FROM "{validated}"', conn)

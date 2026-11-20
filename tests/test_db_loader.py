@@ -163,3 +163,61 @@ def test_wal_database_in_readonly_mount_succeeds(tmp_path: Path) -> None:
         os.chmod(ro_dir, 0o755)
         os.chmod(db_file, 0o644)
         shutil.rmtree(ro_dir, ignore_errors=True)
+
+
+def test_read_allowlisted_table_validates_columns(
+    tmp_master_db: Path, tmp_kiosk_db: Path
+) -> None:
+    with pytest.raises(ValueError, match="empty"):
+        read_allowlisted_table(
+            tmp_kiosk_db, "active_branches", db_kind="kiosk", columns=[]
+        )
+
+    with pytest.raises(RestrictedTableError):
+        read_allowlisted_table(
+            tmp_kiosk_db,
+            "active_branches",
+            db_kind="kiosk",
+            columns=["branch_sheet_id"],
+        )
+
+    safe_df = read_allowlisted_table(
+        tmp_kiosk_db,
+        "active_branches",
+        db_kind="kiosk",
+        columns=["branch_id", "franchise_name"],
+    )
+    assert list(safe_df.columns) == ["branch_id", "franchise_name"]
+
+    with pytest.raises(ValueError, match="empty"):
+        read_allowlisted_table(
+            tmp_master_db, "Summary", db_kind="master_sales", columns=[]
+        )
+
+    with pytest.raises(ValueError, match="Unknown column"):
+        read_allowlisted_table(
+            tmp_master_db,
+            "Summary",
+            db_kind="master_sales",
+            columns=['revenue" FROM Summary; --'],
+        )
+
+    cols_df = read_allowlisted_table(
+        tmp_master_db,
+        "Summary",
+        db_kind="master_sales",
+        columns=["branch_id", "date", "revenue"],
+    )
+    assert list(cols_df.columns) == ["branch_id", "date", "revenue"]
+
+
+def test_connect_readonly_handles_special_uri_chars_in_path(tmp_path: Path) -> None:
+    db_file = tmp_path / "sales #1?v=2.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("CREATE TABLE Summary (branch_id TEXT, date TEXT, revenue TEXT)")
+    conn.execute("INSERT INTO Summary VALUES ('TC-001', '2026-10-01', '4000')")
+    conn.commit()
+    conn.close()
+
+    schema = inspect_schema(db_file, db_kind="master_sales")
+    assert schema["Summary"]["row_count"] == 1
