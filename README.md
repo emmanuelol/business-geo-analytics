@@ -41,7 +41,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python scripts/verify_repo.py
 ```
 
-Run notebooks in sample mode (default `BGA_DATA_MODE=sample`):
+Run notebooks in sample mode (default `BGA_DATA_MODE=sample`; execute `02` first to persist `data/processed/incidents_<DATA_MODE>.csv` for `03`–`05`):
 
 ```bash
 .venv/bin/jupyter lab notebooks/
@@ -82,7 +82,7 @@ To analyze a private local store (benchmark: **The Coffee – Paseo MS**, `TC-00
 1. Place `master_sales.db` and `kiosk.db` inside `data/raw/` (strictly gitignored).
 2. Copy [`local_assumptions.example.json`](local_assumptions.example.json) to `data/raw/local_assumptions.json` (gitignored) and/or [`.env.example`](.env.example) to `.env` (gitignored) to override approximate coordinates (`20.95, -101.42`, `coords_verified=False`) and ROI placeholders via `BGA_*` environment variables.
    - Override precedence: `defaults < data/raw/local_assumptions.json < env BGA_*`
-3. Set `BGA_DATA_MODE=raw` when running notebooks or generating a local executive report into `data/processed/` (gitignored):
+3. Set `BGA_DATA_MODE=raw` when running notebooks (`02_silao_osint_pipeline.ipynb` exports `data/processed/incidents_raw.csv` consumed by `03`–`05`) or generating a local executive report into `data/processed/` (gitignored):
 
 ```bash
 BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise_report; generate_franchise_report(mode='raw')"
@@ -115,6 +115,7 @@ BGA_DATA_MODE=raw .venv/bin/python -c "from src.report import generate_franchise
 - [`src/causal_eval.py`](src/causal_eval.py): Prospective peak bottleneck profiler, 3-scenario ROI/payback simulator, sensitivity matrix, and post-launch DiD/ITS estimators
 - [`src/generate_sample.py`](src/generate_sample.py): Fully synthetic sample CSV generator
 - [`src/report.py`](src/report.py): Populates [`docs/master_franchise_report.md`](docs/master_franchise_report.md) into `data/processed/`
+- [`src/notebook_utils.py`](src/notebook_utils.py): Shared notebook rendering (`show_fig`, `render_table`), mode-isolated incident loading, and diagnostic helpers
 - [`docs/methodology.md`](docs/methodology.md): Statistical, spatial, and causal methodology
 - [`notebooks/`](notebooks/): 5 interactive analysis notebooks (`01` through `05`)
 - [`scripts/verify_repo.py`](scripts/verify_repo.py): Git-ignore, read-only schema, sample parity, and end-to-end smoke checks

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+import nbformat
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -96,6 +98,30 @@ def _check_config_templates(repo_root: Path) -> None:
     assert json_tpl.is_file(), f"Missing {json_tpl}"
     load_config(assumptions_path=json_tpl, env={})
     print("[OK] Config templates (.env.example, local_assumptions.example.json) verified.")
+
+
+def _check_notebooks_contract(repo_root: Path) -> None:
+    nb_dir = repo_root / "notebooks"
+    notebooks = sorted(nb_dir.glob("*.ipynb"))
+    assert len(notebooks) == 5, f"Expected 5 notebooks in {nb_dir}, found {len(notebooks)}"
+    for nb_path in notebooks:
+        nb = nbformat.read(nb_path, as_version=4)
+        for idx, cell in enumerate(nb.cells):
+            if cell.cell_type != "code":
+                continue
+            assert idx > 0 and nb.cells[idx - 1].cell_type == "markdown", (
+                f"{nb_path.name} cell {cell.get('id')} missing preceding Markdown"
+            )
+            for line in cell.source.splitlines():
+                assert not re.match(r"^\s*matplotlib\.use\(", line), (
+                    f"{nb_path.name} has unguarded matplotlib.use()"
+                )
+                assert ".to_string(" not in line, f"{nb_path.name} uses .to_string()"
+            if nb_path.name[:2] in {"03", "04", "05"}:
+                assert 'sample_dir / "incidents.csv"' not in cell.source, (
+                    f"{nb_path.name} hardcodes sample incidents.csv"
+                )
+    print("[OK] Notebooks 01-05 structural, backend, and mode-isolation contracts verified.")
 
 
 def _check_readonly_databases(cfg) -> None:
@@ -193,6 +219,7 @@ def main() -> int:
     cfg = load_config(repo_root=REPO_ROOT)
     _check_gitignore_and_no_db_leak(REPO_ROOT)
     _check_config_templates(REPO_ROOT)
+    _check_notebooks_contract(REPO_ROOT)
     _check_sample_generation(cfg)
 
     sample_daily = pd.read_csv(cfg.sample_dir / "daily_sales.csv", parse_dates=["date"])
