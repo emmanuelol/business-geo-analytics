@@ -19,6 +19,11 @@ from src.config import (
     load_config,
 )
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_IN_MINIMAL_CONTAINER = not (_REPO_ROOT / ".git").exists() and not (
+    _REPO_ROOT / "Dockerfile"
+).exists()
+
 
 def test_defaults_match_confirmed_values(tmp_path: Path) -> None:
     cfg = load_config(assumptions_path=tmp_path / "missing.json", env={})
@@ -132,6 +137,10 @@ def test_validation_rejects_invalid_values(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.skipif(
+    _IN_MINIMAL_CONTAINER,
+    reason="Example templates are intentionally omitted from the minimal runtime container image",
+)
 def test_committed_example_templates_parse_cleanly(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     env_example = repo_root / ".env.example"
