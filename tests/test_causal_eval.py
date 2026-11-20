@@ -11,6 +11,7 @@ from src.causal_eval import (
     build_osint_normalized_baseline,
     build_sensitivity_matrix,
     estimate_did,
+    estimate_hourly_bar_throughput,
     estimate_interrupted_time_series,
     profile_hourly_bottlenecks,
     simulate_linebuster_scenarios,
@@ -232,3 +233,71 @@ def test_its_recovers_known_synthetic_level_and_slope() -> None:
     assert res["slope_change"] == pytest.approx(true_slope, abs=3.0)
     assert res["level_p_value"] < 0.001
     assert res["slope_p_value"] < 0.001
+
+
+def test_weekdays_only_mon_fri_7_to_10_and_bar_throughput() -> None:
+    dates = pd.date_range("2026-08-03", periods=28, freq="D")  # 4 full Mon-Sun weeks
+    daily_rows = []
+    hourly_rows = []
+    for d in dates:
+        is_wknd = d.day_of_week >= 5
+        day_total = 0.0
+        for h in range(6, 22):
+            # High morning traffic on Mon-Fri 7..9; low morning / high afternoon on weekends
+            if not is_wknd and h in (7, 8, 9):
+                vol = 600.0
+            elif is_wknd and h in (18, 19, 20):
+                vol = 900.0
+            else:
+                vol = 150.0
+            day_total += vol
+            hourly_rows.append({"date": d, "hour_int": h, "volume": vol})
+        daily_rows.append(
+            {
+                "date": d,
+                "revenue": day_total,
+                "tickets": int(round(day_total / 150.0)),
+                "avg_ticket": 150.0,
+                "upt": 2.0,
+                "drink_sales": day_total * 0.75,
+                "food_sales": day_total * 0.25,
+                "shop_sales": 0.0,
+            }
+        )
+    daily_df = pd.DataFrame(daily_rows)
+    hourly_df = pd.DataFrame(hourly_rows)
+
+    scoped = build_osint_normalized_baseline(
+        daily_df=daily_df,
+        hourly_df=hourly_df,
+        peak_hours=(7, 8, 9),
+        weekdays_only=True,
+    )
+    assert scoped["weekdays_only"] is True
+    assert scoped["target_peak_hours"] == (7, 8, 9)
+    assert scoped["clean_days"] == 20  # 4 * 5 Mon-Fri weekdays
+    assert scoped["clean_mean_daily_peak_revenue"] == pytest.approx(1800.0)
+
+    cfg = StoreConfig(
+        hardware_capex=12000.0,
+        monthly_saas_fee=1200.0,
+        peak_labor_cost_per_hr=80.0,
+        gross_margin_pct=0.65,
+    )
+    # Auto-uses 3 peak hrs (7,8,9) * 80 = 240/day and 21.7 weekdays/month (~65.1 hrs/mo)
+    sim = simulate_linebuster_scenarios(baseline=scoped, config=cfg)
+    base = sim.loc[sim["scenario"] == "Base"].iloc[0]
+    expected_monthly_opex = 1200.0 + (3.0 * 80.0 * 21.7)
+    assert base["daily_incremental_opex"] * 21.7 == pytest.approx(expected_monthly_opex, rel=1e-4)
+
+    throughput = estimate_hourly_bar_throughput(
+        hourly_df=hourly_df,
+        daily_df=daily_df,
+        seg={"drink_revenue_share": 0.75, "product_mix_unit_shares": {"Beverages": 0.70, "Combos": 0.10}},
+        peak_hours=(7, 8, 9),
+        weekdays_only=True,
+    )
+    hr8 = throughput.loc[throughput["hour_int"] == 8].iloc[0]
+    assert hr8["implied_mean_tickets_hr"] == pytest.approx(600.0 / 150.0)
+    # 4 tickets/hr * 2.0 upt * (0.70 + 0.10 drinks-in-combos) = 6.4 drinks/hr
+    assert hr8["implied_mean_drinks_hr"] == pytest.approx(4.0 * 2.0 * 0.80)

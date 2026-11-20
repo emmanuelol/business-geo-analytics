@@ -154,6 +154,7 @@ def build_osint_normalized_baseline(
     max_distance_m: float = 1500.0,
     peak_hours: Sequence[int] = PEAK_HOURS_DEFAULT,
     operating_hours: tuple[int, int] = (OPERATING_HOUR_MIN, OPERATING_HOUR_MAX),
+    weekdays_only: bool = False,
 ) -> dict[str, Any]:
     """Build clean demand baseline excluding OSINT external-incident shock days."""
     daily = daily_df.copy()
@@ -163,6 +164,10 @@ def build_osint_normalized_baseline(
     hourly = hourly_df.copy()
     hourly["date"] = pd.to_datetime(hourly["date"], errors="coerce")
     hourly = hourly.dropna(subset=["date"]).copy()
+
+    if weekdays_only:
+        daily = daily[daily["date"].dt.day_of_week < 5].copy()
+        hourly = hourly[hourly["date"].dt.day_of_week < 5].copy()
 
     exclude_set: set[pd.Timestamp] = set()
     if incident_dates is not None:
@@ -239,6 +244,8 @@ def build_osint_normalized_baseline(
         "total_days": int(len(daily)),
         "incident_days_excluded": excluded_count,
         "clean_days": int(len(clean_daily)),
+        "weekdays_only": bool(weekdays_only),
+        "target_peak_hours": tuple(sorted(int(h) for h in peak_hours)),
         "raw_mean_daily_revenue": raw_mean_rev,
         "clean_mean_daily_revenue": clean_mean_rev,
         "osint_uplift_adjustment_pct": uplift_adj,
@@ -420,6 +427,25 @@ def _evaluate_scenario_row(
     }
 
 
+def _resolve_schedule_params(
+    baseline: dict[str, Any],
+    cfg: StoreConfig,
+    labor_hours_per_day: float | None,
+    operating_days_per_month: float | None,
+) -> tuple[float, float]:
+    target_hours = baseline.get("target_peak_hours", cfg.peak_hours)
+    eff_labor_hrs = (
+        float(len(target_hours))
+        if labor_hours_per_day is None
+        else float(labor_hours_per_day)
+    )
+    if operating_days_per_month is None:
+        eff_days = 21.7 if baseline.get("weekdays_only", False) else 30.0
+    else:
+        eff_days = float(operating_days_per_month)
+    return eff_labor_hrs, eff_days
+
+
 def simulate_linebuster_scenarios(
     baseline: dict[str, Any],
     config: StoreConfig | None = None,
@@ -429,14 +455,12 @@ def simulate_linebuster_scenarios(
         ("Optimistic", 0.15, 0.04),
     ),
     labor_hours_per_day: float | None = None,
-    operating_days_per_month: float = 30.0,
+    operating_days_per_month: float | None = None,
 ) -> pd.DataFrame:
     """Simulate 3-scenario ex-ante peak-hour revenue lift, break-even, and ROI payback."""
     cfg = config or load_config()
-    eff_labor_hrs = (
-        float(len(cfg.peak_hours))
-        if labor_hours_per_day is None
-        else float(labor_hours_per_day)
+    eff_labor_hrs, eff_days = _resolve_schedule_params(
+        baseline, cfg, labor_hours_per_day, operating_days_per_month
     )
     rows = [
         _evaluate_scenario_row(
@@ -446,7 +470,7 @@ def simulate_linebuster_scenarios(
             baseline=baseline,
             cfg=cfg,
             labor_hours_per_day=eff_labor_hrs,
-            operating_days_per_month=operating_days_per_month,
+            operating_days_per_month=eff_days,
         )
         for name, p_lift, a_lift in scenarios
     ]
@@ -460,14 +484,12 @@ def build_sensitivity_matrix(
     margin_grid: Sequence[float] = (0.55, 0.60, 0.65, 0.70),
     attach_lift_pct: float = 0.0,
     labor_hours_per_day: float | None = None,
-    operating_days_per_month: float = 30.0,
+    operating_days_per_month: float | None = None,
 ) -> pd.DataFrame:
     """Evaluate monthly profit, payback, and break-even across lift x margin combinations."""
     cfg = config or load_config()
-    eff_labor_hrs = (
-        float(len(cfg.peak_hours))
-        if labor_hours_per_day is None
-        else float(labor_hours_per_day)
+    eff_labor_hrs, eff_days = _resolve_schedule_params(
+        baseline, cfg, labor_hours_per_day, operating_days_per_month
     )
     rows: list[dict[str, Any]] = []
     for margin in margin_grid:
@@ -484,10 +506,81 @@ def build_sensitivity_matrix(
                     baseline=baseline,
                     cfg=tmp_cfg,
                     labor_hours_per_day=eff_labor_hrs,
-                    operating_days_per_month=operating_days_per_month,
+                    operating_days_per_month=eff_days,
                 )
             )
     return pd.DataFrame(rows)
+
+
+def estimate_hourly_bar_throughput(
+    hourly_df: pd.DataFrame,
+    daily_df: pd.DataFrame,
+    seg: dict[str, Any] | None = None,
+    peak_hours: Sequence[int] = PEAK_HOURS_DEFAULT,
+    operating_hours: tuple[int, int] = (OPERATING_HOUR_MIN, OPERATING_HOUR_MAX),
+    weekdays_only: bool = False,
+) -> pd.DataFrame:
+    """Convert hourly currency demand into implied tickets/hr and drinks/hr bar throughput."""
+    hr = hourly_df.copy()
+    hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
+    hr = hr.dropna(subset=["date"]).copy()
+
+    daily = daily_df.copy()
+    daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
+    daily = daily.dropna(subset=["date"]).copy()
+
+    if weekdays_only:
+        hr = hr[hr["date"].dt.day_of_week < 5].copy()
+        daily = daily[daily["date"].dt.day_of_week < 5].copy()
+
+    prof = profile_hourly_bottlenecks(
+        hr, peak_hours=peak_hours, operating_hours=operating_hours
+    )
+    tbl = prof["hourly_table"].copy()
+    if tbl.empty:
+        return tbl
+
+    if {"revenue", "tickets"}.issubset(daily.columns) and pd.to_numeric(daily["tickets"], errors="coerce").sum() > 0:
+        rev_sum = float(pd.to_numeric(daily["revenue"], errors="coerce").sum())
+        tkt_sum = float(pd.to_numeric(daily["tickets"], errors="coerce").sum())
+        avg_ticket = max(rev_sum / tkt_sum, 1e-6)
+    elif "avg_ticket" in daily.columns and daily["avg_ticket"].notna().any():
+        avg_ticket = max(float(pd.to_numeric(daily["avg_ticket"], errors="coerce").mean()), 1e-6)
+    else:
+        avg_ticket = 125.0
+
+    upt = (
+        float(pd.to_numeric(daily["upt"], errors="coerce").mean())
+        if "upt" in daily.columns and daily["upt"].notna().any()
+        else 1.0
+    )
+
+    drink_share = np.nan
+    if seg:
+        mix_shares = seg.get("product_mix_unit_shares") or {}
+        if mix_shares:
+            drink_share = float(mix_shares.get("Beverages", 0.0) + mix_shares.get("Combos", 0.0))
+        elif pd.notna(seg.get("drink_revenue_share")):
+            drink_share = float(seg["drink_revenue_share"])
+    if not np.isfinite(drink_share) and {"drink_sales", "food_sales"}.issubset(daily.columns):
+        valid = daily.dropna(subset=["drink_sales", "food_sales"])
+        if not valid.empty:
+            shop = valid["shop_sales"].fillna(0.0) if "shop_sales" in valid.columns else 0.0
+            tot = (valid["drink_sales"] + valid["food_sales"] + shop).sum()
+            if tot > 0:
+                drink_share = float(valid["drink_sales"].sum() / tot)
+    if not np.isfinite(drink_share):
+        drink_share = 0.70
+
+    tbl["implied_mean_tickets_hr"] = np.round(tbl["mean_volume"] / avg_ticket, 2)
+    tbl["implied_p90_tickets_hr"] = np.round(tbl["p90_volume"] / avg_ticket, 2)
+    tbl["implied_p95_tickets_hr"] = np.round(tbl["p95_volume"] / avg_ticket, 2)
+    tbl["implied_mean_drinks_hr"] = np.round(tbl["implied_mean_tickets_hr"] * upt * drink_share, 2)
+    tbl["implied_p95_drinks_hr"] = np.round(tbl["implied_p95_tickets_hr"] * upt * drink_share, 2)
+    tbl["avg_ticket_used"] = round(avg_ticket, 2)
+    tbl["upt_used"] = round(upt, 2)
+    tbl["drink_share_used"] = round(float(drink_share), 4)
+    return tbl
 
 
 def estimate_did(
