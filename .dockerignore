@@ -1,0 +1,40 @@
+# Proprietary raw and processed outputs (never bake into Docker image)
+data/raw/
+data/raw/*
+data/processed/
+data/processed/*
+
+# SQLite databases & journals
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Secrets & local configuration
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json
+secrets/
+
+# Version control & virtual environments
+.git/
+.gitignore
+.venv/
+venv/
+env/
+ENV/
+
+# Python & Jupyter caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

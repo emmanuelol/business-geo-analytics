@@ -97,7 +97,16 @@ def connect_readonly(db_path: Path | str) -> sqlite3.Connection:
     resolved = Path(db_path).resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"SQLite database not found: {resolved}")
-    return sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro", uri=True)
+    try:
+        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+        return conn
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        if "readonly database" not in str(exc).lower():
+            raise
+        # WAL databases on read-only mounts (:ro) lack writable -shm; immutable=1 allows read-only access
+        return sqlite3.connect(f"file:{resolved.as_posix()}?mode=ro&immutable=1", uri=True)
 
 
 def _validate_table_access(table_name: str, db_kind: str) -> str:

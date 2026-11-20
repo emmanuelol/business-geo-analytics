@@ -1,0 +1,45 @@
+services:
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: business-geo-analytics:latest
+    ports:
+      - "8888:8888"
+    environment:
+      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+    volumes:
+      - ./data/processed:/app/data/processed
+      - ./data/raw:/app/data/raw:ro
+    restart: unless-stopped
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: business-geo-analytics:latest
+    profiles: ["tools"]
+    environment:
+      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+    volumes:
+      - ./data/processed:/app/data/processed
+      - ./data/raw:/app/data/raw:ro
+    command: ["sh", "-c", "pytest -q && python scripts/verify_repo.py"]
+
+  report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: business-geo-analytics:latest
+    profiles: ["tools"]
+    environment:
+      - BGA_DATA_MODE=${BGA_DATA_MODE:-sample}
+    volumes:
+      - ./data/processed:/app/data/processed
+      - ./data/raw:/app/data/raw:ro
+    command:
+      [
+        "python",
+        "-c",
+        "import os; from src.report import generate_franchise_report; res = generate_franchise_report(mode=os.environ.get('BGA_DATA_MODE', 'sample')); print(res['output_path'])",
+      ]

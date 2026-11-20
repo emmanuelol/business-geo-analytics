@@ -35,6 +35,21 @@ from src.spatial_models import estimate_lag_effects, join_sales_with_incidents
 
 
 def _check_gitignore_and_no_db_leak(repo_root: Path) -> None:
+    if not (repo_root / ".git").exists():
+        image_dirs = ["src", "notebooks", "docs", "scripts", "tests", "data/sample"]
+        exts = {".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm"}
+        leaked_files = [
+            str(p.relative_to(repo_root))
+            for sub in image_dirs
+            if (repo_root / sub).exists()
+            for p in (repo_root / sub).rglob("*")
+            if p.is_file() and p.suffix.lower() in exts
+        ]
+        if leaked_files:
+            raise RuntimeError(f"Database file leaked into container image: {leaked_files}")
+        print("[OK] Container mode (no .git): zero .db/.sqlite files in image paths.")
+        return
+
     targets = [
         "data/raw/kiosk.db",
         "data/raw/master_sales.db",

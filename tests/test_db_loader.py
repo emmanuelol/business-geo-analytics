@@ -133,3 +133,33 @@ def test_auxiliary_loaders_contextual_and_channels(tmp_master_db: Path) -> None:
     ch_df = load_sales_channels(branch_id="TC-001", db_path=tmp_master_db)
     assert set(ch_df["channel"]) == {"Tablet", "Smartphone"}
     assert pd.api.types.is_datetime64_any_dtype(ch_df["date"])
+
+
+def test_wal_database_in_readonly_mount_succeeds(tmp_path: Path) -> None:
+    import os
+    import shutil
+
+    ro_dir = tmp_path / "ro_mount"
+    ro_dir.mkdir()
+    db_file = ro_dir / "wal_sales.db"
+
+    w_conn = sqlite3.connect(db_file)
+    w_conn.execute("PRAGMA journal_mode=WAL")
+    w_conn.execute("CREATE TABLE Summary (branch_id TEXT, date TEXT, revenue TEXT)")
+    w_conn.execute("INSERT INTO Summary VALUES ('TC-001', '2026-10-01', '4000')")
+    w_conn.commit()
+    w_conn.close()
+
+    # Simulate Docker :ro bind mount without -shm/-wal sidecar files
+    for sidecar in (ro_dir / "wal_sales.db-shm", ro_dir / "wal_sales.db-wal"):
+        if sidecar.exists():
+            sidecar.unlink()
+    os.chmod(db_file, 0o444)
+    os.chmod(ro_dir, 0o555)
+    try:
+        schema = inspect_schema(db_file, db_kind="master_sales")
+        assert schema["Summary"]["row_count"] == 1
+    finally:
+        os.chmod(ro_dir, 0o755)
+        os.chmod(db_file, 0o644)
+        shutil.rmtree(ro_dir, ignore_errors=True)

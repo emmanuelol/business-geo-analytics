@@ -49,6 +49,32 @@ Run notebooks in sample mode (default `BGA_DATA_MODE=sample`):
 
 ---
 
+## Docker Quickstart
+
+`.dockerignore` blocks `data/raw/`, `data/processed/`, `*.db`, `*.sqlite*`, `.env`, and `.git/` so private databases and credentials never enter an image layer. The container runs as non-root `appuser` and defaults to `BGA_DATA_MODE=sample`.
+
+**Open-source sample mode (out of the box):**
+
+```bash
+docker compose up
+```
+
+**Local private-data mode (mounts `./data/raw` strictly read-only as `:ro`):**
+
+```bash
+BGA_DATA_MODE=raw docker compose up
+```
+
+**Run tests or generate the executive report via container tools:**
+
+```bash
+docker compose --profile tools run --rm test
+docker compose --profile tools run --rm report
+BGA_DATA_MODE=raw docker compose --profile tools run --rm report
+```
+
+---
+
 ## Private Local Mode & Configuration Overrides
 
 To analyze a private local store (benchmark: **The Coffee – Paseo MS**, `TC-001`, Silao, Guanajuato):
