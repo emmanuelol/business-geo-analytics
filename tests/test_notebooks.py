@@ -47,6 +47,12 @@ def test_notebooks_narrative_backend_and_mode_isolation(nb_name: str) -> None:
         code_sources.append(cell.source)
 
     full_src = "\n".join(code_sources)
+    for forbidden_env in ("BGA_DATA_MODE", "BGA_FETCH_LIVE", "BGA_OSINT_START", "BGA_OSINT_END"):
+        assert forbidden_env not in full_src, (
+            f"{nb_name} should read {forbidden_env} via load_config(), not os.environ directly"
+        )
+    assert "DATA_MODE = cfg.data_mode" in full_src
+
     if nb_name == "02_silao_osint_pipeline.ipynb":
         assert "fetch_rss_feed" not in full_src
         assert "build_google_news_rss_urls_for_window" in full_src
